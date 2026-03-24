@@ -1,6 +1,6 @@
 # UDP Forwarder
 
-A lightweight UDP packet forwarder written in Rust. Listens on a single port and forwards all received packets to multiple destinations. Built for splitting Forza telemetry to multiple consumers.
+A lightweight UDP packet forwarder written in Rust. Listens on a single port and forwards all received packets to multiple destinations. Built as a companion to [RaceIQ](https://github.com/SpeedHQ/RaceIQ) for splitting Forza's UDP output to multiple consumers.
 
 ## Usage
 
