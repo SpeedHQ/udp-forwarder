@@ -64,22 +64,25 @@ Each zip contains the binary and a default `config.ini`.
 
 ## Performance
 
-Architecture uses parallel fan-out with one dedicated sender thread per target, connected UDP sockets, 4MB socket buffers, and zero-copy `Arc` data sharing.
+Architecture uses parallel fan-out with one dedicated sender thread per target, pre-allocated broadcast ring buffer, connected UDP sockets, and 4MB socket buffers. Zero heap allocations on the hot path.
 
 Run the benchmark: `cargo bench --bench forwarding_bench`
 
-**Latency** (500-byte packets at 100 pkt/s, measured on Apple Silicon):
+The benchmark is a black-box smoke test that spawns the actual binary in headless mode, sends real packets, and measures delivery and latency on external receivers.
 
-| | 10 targets | 20 targets | 100 targets |
-|---|---|---|---|
-| Avg | 71µs | 107µs | 382µs |
-| P50 | 68µs | 100µs | 379µs |
-| P95 | 120µs | 197µs | 547µs |
-| P99 | 145µs | 234µs | 841µs |
-| Max | 277µs | 279µs | 968µs |
-| Delivery | 100% | 100% | 100% |
+**Per-game latency** (5 targets at 100 pkt/s, tested on M5 MacBook Pro):
 
-Zero packet loss across all configurations. At 100 targets, P99 stays under 1ms.
+| | Forza Motorsport | ACC | F1 24 | LMU / rFactor 2 | iRacing |
+|---|---|---|---|---|---|
+| Packet size | 331 bytes | 608 bytes | 1460 bytes | 1684 bytes | 2048 bytes |
+| Avg | 51µs | 53µs | 53µs | 57µs | 55µs |
+| P50 | 49µs | 50µs | 51µs | 55µs | 53µs |
+| P95 | 79µs | 86µs | 84µs | 90µs | 88µs |
+| P99 | 94µs | 102µs | 99µs | 105µs | 106µs |
+| Max | 106µs | 131µs | 135µs | 179µs | 117µs |
+| Delivery | 100% | 100% | 100% | 100% | 100% |
+
+Zero packet loss across all games. Sub-110µs P99 regardless of packet size.
 
 ## Building from Source
 
