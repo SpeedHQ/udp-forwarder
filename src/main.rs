@@ -270,6 +270,20 @@ fn main() {
 
     // --- GUI mode ---
     let main_window = MainWindow::new().unwrap();
+
+    // Set macOS dock icon (winit doesn't support this, must use NSApplication directly)
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::MainThreadMarker;
+        use objc2::AllocAnyThread;
+        let icon_data = include_bytes!(concat!(env!("OUT_DIR"), "/app_icon.png"));
+        let data = objc2_foundation::NSData::with_bytes(icon_data);
+        if let Some(ns_image) = objc2_app_kit::NSImage::initWithData(objc2_app_kit::NSImage::alloc(), &data) {
+            let app = objc2_app_kit::NSApplication::sharedApplication(MainThreadMarker::new().unwrap());
+            unsafe { app.setApplicationIconImage(Some(&ns_image)) };
+        }
+    }
+
     main_window.global::<AppState>().set_version(SharedString::from(format!("v{}", VERSION)));
     main_window.global::<AppState>().on_open_github(|| {
         let _ = open::that("https://github.com/SpeedHQ/udp-forwarder");
