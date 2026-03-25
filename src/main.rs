@@ -605,15 +605,17 @@ fn main() {
         let timer = slint::Timer::default();
         timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(100), move || {
             // Handle menu events (Quit)
-            if let Ok(event) = MenuEvent::receiver().try_recv() {
+            while let Ok(event) = MenuEvent::receiver().try_recv() {
                 if event.id == quit_id {
                     slint::quit_event_loop().ok();
                 }
             }
             // Handle tray icon click (show window)
-            if let Ok(TrayIconEvent::Click { .. }) = TrayIconEvent::receiver().try_recv() {
-                if let Some(w) = w.upgrade() {
-                    w.window().show().ok();
+            while let Ok(event) = TrayIconEvent::receiver().try_recv() {
+                if matches!(event, TrayIconEvent::Click { .. }) {
+                    if let Some(w) = w.upgrade() {
+                        w.window().show().ok();
+                    }
                 }
             }
         });
@@ -625,14 +627,14 @@ fn main() {
     {
         let w = main_window.as_weak();
         main_window.window().on_close_requested(move || {
-            let w = w.upgrade().unwrap();
-            if w.global::<AppState>().get_minimize_to_tray() {
-                w.window().hide().ok();
-                slint::CloseRequestResponse::KeepWindowShown
-            } else {
-                slint::quit_event_loop().ok();
-                slint::CloseRequestResponse::HideWindow
+            if let Some(w) = w.upgrade() {
+                if w.global::<AppState>().get_minimize_to_tray() {
+                    w.window().hide().ok();
+                    return slint::CloseRequestResponse::KeepWindowShown;
+                }
             }
+            slint::quit_event_loop().ok();
+            slint::CloseRequestResponse::HideWindow
         });
     }
 
