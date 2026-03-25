@@ -4529,7 +4529,6 @@ dependencies = [
 name = "udp-forwarder"
 version = "0.1.0"
 dependencies = [
- "crossbeam-channel",
  "libc",
  "rust-ini",
  "slint",

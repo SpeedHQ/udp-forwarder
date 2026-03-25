@@ -1,4 +1,3 @@
-use crossbeam_channel::{self, Sender};
 use ini::Ini;
 use slint::{Model, ModelRc, SharedString, VecModel};
 use std::env;
@@ -12,11 +11,14 @@ slint::include_modules!();
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SOCKET_BUF_SIZE: usize = 4 * 1024 * 1024; // 4MB socket buffer
+const RING_CAPACITY: usize = 4096;
 
-/// Lock-free broadcast ring buffer. One writer, N readers.
-/// Eliminates per-target channel sends — single write, all readers see it.
+/// Pre-allocated broadcast ring buffer. Zero allocations on the hot path.
+/// One writer publishes into pre-allocated slots, N readers copy out.
 struct BroadcastRing {
-    slots: Vec<Mutex<Vec<u8>>>,
+    /// Pre-allocated fixed-size buffers — no heap allocation per packet
+    slots: Vec<Mutex<(usize, [u8; 65535])>>,
+    /// Monotonically increasing write cursor
     head: AtomicUsize,
     capacity: usize,
 }
@@ -24,7 +26,7 @@ struct BroadcastRing {
 impl BroadcastRing {
     fn new(capacity: usize) -> Self {
         let slots = (0..capacity)
-            .map(|_| Mutex::new(Vec::with_capacity(65535)))
+            .map(|_| Mutex::new((0usize, [0u8; 65535])))
             .collect();
         Self {
             slots,
@@ -33,19 +35,22 @@ impl BroadcastRing {
         }
     }
 
+    /// Publish data into the next slot. Returns the slot index.
+    /// Zero allocation — copies into pre-allocated buffer.
     fn publish(&self, data: &[u8]) -> usize {
         let slot = self.head.fetch_add(1, Ordering::Release);
         let idx = slot % self.capacity;
         let mut buf = self.slots[idx].lock().unwrap();
-        buf.clear();
-        buf.extend_from_slice(data);
+        buf.0 = data.len();
+        buf.1[..data.len()].copy_from_slice(data);
         slot
     }
 
-    fn read(&self, slot: usize) -> Vec<u8> {
+    /// Read data from a slot. Copies from pre-allocated buffer.
+    fn send_from(&self, slot: usize, sock: &UdpSocket) {
         let idx = slot % self.capacity;
         let buf = self.slots[idx].lock().unwrap();
-        buf.clone()
+        let _ = sock.send(&buf.1[..buf.0]);
     }
 }
 
@@ -55,16 +60,12 @@ fn tune_socket(sock: &UdpSocket) {
     let size = SOCKET_BUF_SIZE as libc::c_int;
     unsafe {
         libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_RCVBUF,
+            fd, libc::SOL_SOCKET, libc::SO_RCVBUF,
             &size as *const _ as *const libc::c_void,
             std::mem::size_of::<libc::c_int>() as libc::socklen_t,
         );
         libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_SNDBUF,
+            fd, libc::SOL_SOCKET, libc::SO_SNDBUF,
             &size as *const _ as *const libc::c_void,
             std::mem::size_of::<libc::c_int>() as libc::socklen_t,
         );
@@ -132,6 +133,41 @@ fn save_config(path: &PathBuf, listen_port: &str, targets: &[(String, String, St
     }
 }
 
+/// Spawn sender threads for a set of targets using the broadcast ring.
+/// Returns the ring, head counter, and stop flag for the sender threads.
+fn spawn_ring_senders(
+    targets: &[SocketAddr],
+    ring: &Arc<BroadcastRing>,
+    head: &Arc<AtomicU64>,
+    stop: &Arc<AtomicBool>,
+) {
+    for target in targets {
+        let target = *target;
+        let ring = ring.clone();
+        let head = head.clone();
+        let stop = stop.clone();
+        let sock = UdpSocket::bind("0.0.0.0:0").expect("Failed to create send socket");
+        tune_socket(&sock);
+        sock.connect(target).expect("Failed to connect send socket");
+
+        thread::spawn(move || {
+            let mut cursor: u64 = 0;
+            loop {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let current = head.load(Ordering::Acquire);
+                if cursor < current {
+                    ring.send_from(cursor as usize, &sock);
+                    cursor += 1;
+                } else {
+                    thread::yield_now();
+                }
+            }
+        });
+    }
+}
+
 fn run_headless(config_path: PathBuf) {
     let config = load_config(&config_path).unwrap_or_else(|| {
         eprintln!("Failed to load config '{}'", config_path.display());
@@ -162,40 +198,15 @@ fn run_headless(config_path: PathBuf) {
     tune_socket(&socket);
 
     println!("Listening on UDP port {}", config.listen_port);
-
-    // Broadcast ring buffer — single write, all sender threads read
-    let ring = Arc::new(BroadcastRing::new(4096));
-    let head = Arc::new(AtomicU64::new(0));
-
     for target in &targets {
-        let target = *target;
-        let ring = ring.clone();
-        let head = head.clone();
-        let sock = UdpSocket::bind("0.0.0.0:0").unwrap_or_else(|e| {
-            eprintln!("Failed to create send socket: {}", e);
-            std::process::exit(1);
-        });
-        tune_socket(&sock);
-        sock.connect(target).unwrap_or_else(|e| {
-            eprintln!("Failed to connect to {}: {}", target, e);
-            std::process::exit(1);
-        });
         println!("  Forwarding to {}", target);
-
-        thread::spawn(move || {
-            let mut cursor: u64 = 0;
-            loop {
-                let current = head.load(Ordering::Acquire);
-                if cursor < current {
-                    let data = ring.read(cursor as usize);
-                    let _ = sock.send(&data);
-                    cursor += 1;
-                } else {
-                    thread::yield_now();
-                }
-            }
-        });
     }
+
+    let ring = Arc::new(BroadcastRing::new(RING_CAPACITY));
+    let head = Arc::new(AtomicU64::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+
+    spawn_ring_senders(&targets, &ring, &head, &stop);
 
     let mut buf = [0u8; 65535];
     loop {
@@ -416,26 +427,15 @@ fn main() {
             };
 
             socket.set_read_timeout(Some(std::time::Duration::from_millis(500))).ok();
-
-            // Spawn dedicated sender threads with connected + tuned sockets
-            let senders: Vec<Sender<Arc<[u8]>>> = targets
-                .iter()
-                .map(|target| {
-                    let target = *target;
-                    let (tx, rx) = crossbeam_channel::bounded::<Arc<[u8]>>(1024);
-                    let sock = UdpSocket::bind("0.0.0.0:0").expect("Failed to create send socket");
-                    tune_socket(&sock);
-                    sock.connect(target).expect("Failed to connect send socket");
-                    thread::spawn(move || {
-                        while let Ok(data) = rx.recv() {
-                            let _ = sock.send(&data);
-                        }
-                    });
-                    tx
-                })
-                .collect();
-
             tune_socket(&socket);
+
+            // Broadcast ring — zero allocation on hot path, same as headless
+            let ring = Arc::new(BroadcastRing::new(RING_CAPACITY));
+            let ring_head = Arc::new(AtomicU64::new(0));
+            let sender_stop = Arc::new(AtomicBool::new(false));
+
+            spawn_ring_senders(&targets, &ring, &ring_head, &sender_stop);
+
             stop_flag.store(false, Ordering::Relaxed);
             packet_count.store(0, Ordering::Relaxed);
             state.set_running(true);
@@ -451,7 +451,7 @@ fn main() {
                 let mut buf = [0u8; 65535];
                 loop {
                     if stop.load(Ordering::Relaxed) {
-                        drop(senders);
+                        sender_stop.store(true, Ordering::Relaxed);
                         break;
                     }
 
@@ -462,10 +462,8 @@ fn main() {
                         Err(_) => continue,
                     };
 
-                    let data: Arc<[u8]> = Arc::from(&buf[..len]);
-                    for tx in &senders {
-                        let _ = tx.try_send(Arc::clone(&data));
-                    }
+                    ring.publish(&buf[..len]);
+                    ring_head.fetch_add(1, Ordering::Release);
 
                     let n = count.fetch_add(1, Ordering::Relaxed) + 1;
                     if n % 60 == 0 {
