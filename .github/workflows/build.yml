@@ -77,6 +77,12 @@ jobs:
             --wait
           rm notarize.zip
 
+      - name: Clean up signing credentials
+        if: matrix.target == 'aarch64-apple-darwin' && always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/certificate.p12"
+
       - name: Package
         shell: bash
         run: |
