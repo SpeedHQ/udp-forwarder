@@ -37,6 +37,10 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Install Linux dependencies
+        if: contains(matrix.target, 'linux')
+        run: sudo apt-get update && sudo apt-get install -y libayatana-appindicator3-dev
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
