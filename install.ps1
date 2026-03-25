@@ -33,12 +33,6 @@ if (-not (Test-Path $InstallDir)) {
 
 Copy-Item "$TmpDir\udp-forwarder.exe" "$InstallDir\udp-forwarder.exe" -Force
 
-# Copy default config to current directory if none exists
-if (-not (Test-Path ".\config.ini")) {
-    Copy-Item "$TmpDir\config.ini" ".\config.ini"
-    Write-Host "Created config.ini in current directory - edit it before running."
-}
-
 # Clean up
 Remove-Item $TmpDir -Recurse -Force
 

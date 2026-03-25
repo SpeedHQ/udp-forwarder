@@ -49,12 +49,6 @@ if [ "$OS" = "Darwin" ]; then
   xattr -d com.apple.quarantine "$INSTALL_DIR/udp-forwarder" 2>/dev/null || true
 fi
 
-# Copy default config to current directory if none exists
-if [ ! -f config.ini ]; then
-  cp "$TMP/config.ini" ./config.ini
-  echo "Created config.ini in current directory — edit it before running."
-fi
-
 echo ""
 echo "Installed udp-forwarder v${VERSION} to $INSTALL_DIR/udp-forwarder"
 

@@ -1,3 +1,4 @@
+use auto_launch::AutoLaunchBuilder;
 use ini::Ini;
 use slint::{Model, ModelRc, SharedString, VecModel};
 use std::env;
@@ -6,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Instant;
 
 slint::include_modules!();
 
@@ -92,12 +94,14 @@ fn config_path() -> PathBuf {
 struct Config {
     listen_port: u16,
     targets: Vec<(String, u16, String)>,
+    launch_on_startup: bool,
 }
 
 fn load_config(path: &PathBuf) -> Option<Config> {
     let conf = Ini::load_from_file(path).ok()?;
     let general = conf.section(Some("general"))?;
     let listen_port: u16 = general.get("listen_port")?.parse().ok()?;
+    let launch_on_startup = general.get("launch_on_startup").map_or(false, |v| v == "true");
 
     let mut targets = Vec::new();
     for (key, _) in conf.iter() {
@@ -112,13 +116,14 @@ fn load_config(path: &PathBuf) -> Option<Config> {
         targets.push((ip.to_string(), port, note));
     }
 
-    Some(Config { listen_port, targets })
+    Some(Config { listen_port, targets, launch_on_startup })
 }
 
-fn save_config(path: &PathBuf, listen_port: &str, targets: &[(String, String, String)]) {
+fn save_config(path: &PathBuf, listen_port: &str, targets: &[(String, String, String)], launch_on_startup: bool) {
     let mut conf = Ini::new();
     conf.with_section(Some("general"))
-        .set("listen_port", listen_port);
+        .set("listen_port", listen_port)
+        .set("launch_on_startup", launch_on_startup.to_string());
 
     for (i, (ip, port, note)) in targets.iter().enumerate() {
         let mut section = conf.with_section(Some(format!("forward.{}", i + 1)));
@@ -130,6 +135,27 @@ fn save_config(path: &PathBuf, listen_port: &str, targets: &[(String, String, St
 
     if let Err(e) = conf.write_to_file(path) {
         eprintln!("Failed to save config: {}", e);
+    }
+}
+
+fn auto_launch() -> auto_launch::AutoLaunch {
+    let exe = env::current_exe().unwrap_or_default();
+    AutoLaunchBuilder::new()
+        .set_app_name("UDP Forwarder")
+        .set_app_path(exe.to_str().unwrap_or_default())
+        .build()
+        .expect("Failed to build AutoLaunch")
+}
+
+fn set_launch_on_startup(enabled: bool) {
+    let launcher = auto_launch();
+    let result = if enabled {
+        launcher.enable()
+    } else {
+        launcher.disable()
+    };
+    if let Err(e) = result {
+        eprintln!("Failed to {} auto-launch: {}", if enabled { "enable" } else { "disable" }, e);
     }
 }
 
@@ -257,6 +283,7 @@ fn main() {
             })
             .collect();
         state.set_targets(ModelRc::new(VecModel::from(targets)));
+        state.set_launch_on_startup(config.launch_on_startup);
     }
 
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -350,6 +377,27 @@ fn main() {
         });
     }
 
+    // Toggle launch on startup
+    {
+        let w = main_window.as_weak();
+        let path = config_file.clone();
+        main_window.global::<AppState>().on_toggle_launch_on_startup(move |enabled| {
+            set_launch_on_startup(enabled);
+            // Persist to config
+            let w = w.upgrade().unwrap();
+            let state = w.global::<AppState>();
+            let listen_port = state.get_listen_port().to_string();
+            let model = state.get_targets();
+            let targets: Vec<(String, String, String)> = (0..model.row_count())
+                .map(|i| {
+                    let t = model.row_data(i).unwrap();
+                    (t.ip.to_string(), t.port.to_string(), t.note.to_string())
+                })
+                .collect();
+            save_config(&path, &listen_port, &targets, enabled);
+        });
+    }
+
     // Save config
     {
         let w = main_window.as_weak();
@@ -367,7 +415,8 @@ fn main() {
                     (t.ip.to_string(), t.port.to_string(), t.note.to_string())
                 })
                 .collect();
-            save_config(&path, &listen_port, &targets);
+            let launch_on_startup = state.get_launch_on_startup();
+            save_config(&path, &listen_port, &targets, launch_on_startup);
             state.set_status_text(SharedString::from("Config saved, restarting..."));
             // Stop current forwarder and wait for thread to release the port
             stop.store(true, Ordering::Relaxed);
@@ -449,6 +498,8 @@ fn main() {
 
             let h = thread::spawn(move || {
                 let mut buf = [0u8; 65535];
+                let mut last_ui_update = Instant::now();
+                let mut last_pps_count: u64 = 0;
                 loop {
                     if stop.load(Ordering::Relaxed) {
                         sender_stop.store(true, Ordering::Relaxed);
@@ -466,10 +517,15 @@ fn main() {
                     ring_head.fetch_add(1, Ordering::Release);
 
                     let n = count.fetch_add(1, Ordering::Relaxed) + 1;
-                    if n % 60 == 0 {
+                    let elapsed = last_ui_update.elapsed();
+                    if elapsed.as_millis() >= 1000 {
+                        let pps = ((n - last_pps_count) as f64 / elapsed.as_secs_f64()) as i32;
+                        last_pps_count = n;
+                        last_ui_update = Instant::now();
                         let _ = w2.upgrade_in_event_loop(move |main_window| {
                             let state = main_window.global::<AppState>();
                             state.set_packets_forwarded(n as i32);
+                            state.set_packets_per_second(pps);
                             state.set_status_text(SharedString::from(format!(
                                 "Running — {} packets forwarded", n
                             )));

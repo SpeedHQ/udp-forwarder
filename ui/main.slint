@@ -1,4 +1,4 @@
-import { Button, LineEdit, VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
+import { Button, LineEdit, VerticalBox, HorizontalBox, ScrollView, CheckBox } from "std-widgets.slint";
 
 struct ForwardTarget {
     ip: string,
@@ -14,13 +14,16 @@ export global AppState {
     in-out property <bool> running: false;
     in-out property <string> status-text: "Stopped";
     in-out property <int> packets-forwarded: 0;
+    in-out property <int> packets-per-second: 0;
     in-out property <string> version: "";
+    in-out property <bool> launch-on-startup: false;
 
     callback start();
     callback stop();
     callback add-target();
     callback remove-target(int);
     callback save-config();
+    callback toggle-launch-on-startup(bool);
     callback update-target-ip(int, string);
     callback update-target-port(int, string);
     callback update-target-note(int, string);
@@ -168,9 +171,26 @@ export component MainWindow inherits Window {
                 horizontal-stretch: 1;
             }
 
+            if AppState.running : Text {
+                text: AppState.packets-per-second + " pkt/s";
+                color: #a1a1aa;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+
             Button {
                 text: "Save & Apply";
                 clicked => { AppState.save-config(); }
+            }
+        }
+
+        // Launch on startup
+        HorizontalLayout {
+            height: 24px;
+            CheckBox {
+                text: "Launch on startup";
+                checked: AppState.launch-on-startup;
+                toggled => { AppState.toggle-launch-on-startup(self.checked); }
             }
         }
     }

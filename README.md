@@ -28,7 +28,8 @@ udp-forwarder
 
 On Windows, use `udp-forwarder.exe` or double-click the executable.
 
-## CLI Mode (Headless)
+<details>
+<summary><strong>CLI Mode (Headless)</strong></summary>
 
 For servers or automation, run without the GUI:
 
@@ -58,6 +59,8 @@ port = 5300
 - `[general]` — `listen_port` is the UDP port to receive packets on
 - `[forward.*]` — any section starting with `forward` defines a target. Each needs `ip` and `port`
 
+</details>
+
 ## Manual Install
 
 If you prefer not to use the install script, grab a zip from [Releases](https://github.com/SpeedHQ/udp-forwarder/releases):
@@ -68,7 +71,7 @@ If you prefer not to use the install script, grab a zip from [Releases](https://
 | Linux (x86_64) | `udp-forwarder-v*-x86_64-unknown-linux-gnu.zip` |
 | macOS (Apple Silicon) | `udp-forwarder-v*-aarch64-apple-darwin.zip` |
 
-Each zip contains the binary and a default `config.ini`.
+Each zip contains the binary and an example `config.ini` for headless mode.
 
 **macOS note:** Remove the quarantine attribute after extracting: `xattr -d com.apple.quarantine udp-forwarder`
 
@@ -76,7 +79,7 @@ Each zip contains the binary and a default `config.ini`.
 
 Architecture uses parallel fan-out with one dedicated sender thread per target, pre-allocated broadcast ring buffer, connected UDP sockets, and 4MB socket buffers. Zero heap allocations on the hot path.
 
-Run the benchmark: `cargo bench --bench forwarding_bench`
+Run the benchmark: `cargo bench`
 
 The benchmark is a black-box smoke test that spawns the actual binary in headless mode, sends real packets, and measures delivery and latency on external receivers.
 
