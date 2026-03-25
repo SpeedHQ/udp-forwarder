@@ -1,5 +1,6 @@
 [general]
 listen_port = 5300
+minimize_to_tray = true
 
 [forward.1]
 ip = 127.0.0.1
