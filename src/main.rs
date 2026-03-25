@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
+use tray_icon::{TrayIconBuilder, menu::{Menu, MenuItem, MenuEvent, PredefinedMenuItem}};
+use tray_icon::TrayIconEvent;
 
 slint::include_modules!();
 
@@ -573,5 +575,85 @@ fn main() {
         }
     }
 
-    main_window.run().unwrap();
+    // --- System tray ---
+    let icon_bytes = include_bytes!(concat!(env!("OUT_DIR"), "/tray_icon.png"));
+    let icon_img = image::load_from_memory(icon_bytes).expect("Failed to load tray icon").into_rgba8();
+    let (w_icon, h_icon) = icon_img.dimensions();
+    let tray_icon_data = tray_icon::Icon::from_rgba(icon_img.into_raw(), w_icon, h_icon)
+        .expect("Failed to create tray icon");
+
+    let status_item = MenuItem::new("Stopped", false, None);
+    let quit_item = MenuItem::new("Quit", true, None);
+
+    let tray_menu = Menu::new();
+    tray_menu.append_items(&[&status_item, &PredefinedMenuItem::separator(), &quit_item]).unwrap();
+
+    let _tray = TrayIconBuilder::new()
+        .with_menu(Box::new(tray_menu))
+        .with_tooltip("UDP Forwarder")
+        .with_icon(tray_icon_data)
+        .with_menu_on_left_click(false)
+        .build()
+        .expect("Failed to create tray icon");
+
+    let quit_item_id = quit_item.id().clone();
+
+    // Poll tray events via Slint timer
+    {
+        let w = main_window.as_weak();
+        let quit_id = quit_item_id.clone();
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(100), move || {
+            // Handle menu events (Quit)
+            if let Ok(event) = MenuEvent::receiver().try_recv() {
+                if event.id == quit_id {
+                    slint::quit_event_loop().ok();
+                }
+            }
+            // Handle tray icon click (show window)
+            if let Ok(TrayIconEvent::Click { .. }) = TrayIconEvent::receiver().try_recv() {
+                if let Some(w) = w.upgrade() {
+                    w.window().show().ok();
+                }
+            }
+        });
+        // Leak the timer so it lives for the duration of the app
+        std::mem::forget(timer);
+    }
+
+    // Handle window close — hide to tray or quit
+    {
+        let w = main_window.as_weak();
+        main_window.window().on_close_requested(move || {
+            let w = w.upgrade().unwrap();
+            if w.global::<AppState>().get_minimize_to_tray() {
+                w.window().hide().ok();
+                slint::CloseRequestResponse::KeepWindowShown
+            } else {
+                slint::quit_event_loop().ok();
+                slint::CloseRequestResponse::HideWindow
+            }
+        });
+    }
+
+    // Timer to update tray status text from UI state
+    {
+        let w = main_window.as_weak();
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, std::time::Duration::from_secs(1), move || {
+            if let Some(w) = w.upgrade() {
+                let state = w.global::<AppState>();
+                let text = if state.get_running() {
+                    format!("Running — {} pkt/s", state.get_packets_per_second())
+                } else {
+                    "Stopped".to_string()
+                };
+                status_item.set_text(&text);
+            }
+        });
+        std::mem::forget(timer);
+    }
+
+    main_window.show().unwrap();
+    slint::run_event_loop_until_quit().unwrap();
 }
