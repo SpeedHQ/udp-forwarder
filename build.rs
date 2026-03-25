@@ -1,11 +1,15 @@
-use std::env;
 use std::path::Path;
 
 fn main() {
-    slint_build::compile("ui/main.slint").unwrap();
+    // Generate icon BEFORE compiling Slint (Slint references ui/icon.png)
+    generate_icon();
 
-    // Generate tray icon: 32x32 thick arrow pointing top-right
-    let out_dir = env::var("OUT_DIR").unwrap();
+    slint_build::compile("ui/main.slint").unwrap();
+    println!("cargo::rerun-if-changed=build.rs");
+}
+
+fn generate_icon() {
+    let out_dir = std::env::var("OUT_DIR").unwrap();
     let icon_path = Path::new(&out_dir).join("tray_icon.png");
 
     let mut img = image::RgbaImage::new(32, 32);
@@ -39,5 +43,8 @@ fn main() {
     }
 
     img.save(&icon_path).expect("Failed to save tray icon");
-    println!("cargo::rerun-if-changed=build.rs");
+
+    // Also save to ui/ so Slint can reference it as window icon
+    let ui_icon_path = Path::new("ui/icon.png");
+    img.save(ui_icon_path).expect("Failed to save UI icon");
 }
