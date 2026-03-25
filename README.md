@@ -16,11 +16,31 @@ curl -fsSL https://raw.githubusercontent.com/SpeedHQ/udp-forwarder/main/install.
 irm https://raw.githubusercontent.com/SpeedHQ/udp-forwarder/main/install.ps1 | iex
 ```
 
-Both installers download the latest release, install the binary, and create a `config.ini` in your current directory.
+Both installers download the latest release and install the binary.
 
-## Configuration
+## GUI Mode
 
-Edit `config.ini` to set the listen port and forwarding targets:
+Launch the app to configure everything visually — set the listen port, add or remove forwarding targets, and start/stop forwarding. Settings are saved automatically to `config.ini`.
+
+```bash
+udp-forwarder
+```
+
+On Windows, use `udp-forwarder.exe` or double-click the executable.
+
+## CLI Mode (Headless)
+
+For servers or automation, run without the GUI:
+
+```bash
+udp-forwarder --headless              # uses config.ini next to the binary
+udp-forwarder path/to/config.ini      # custom config path
+udp-forwarder --version               # print version
+```
+
+### Config Format
+
+Create a `config.ini`:
 
 ```ini
 [general]
@@ -37,16 +57,6 @@ port = 5300
 
 - `[general]` — `listen_port` is the UDP port to receive packets on
 - `[forward.*]` — any section starting with `forward` defines a target. Each needs `ip` and `port`
-
-## Running
-
-```bash
-udp-forwarder                # uses config.ini next to the binary
-udp-forwarder my-config.ini  # custom config path
-udp-forwarder --version      # print version
-```
-
-On Windows, use `udp-forwarder.exe` or double-click the executable.
 
 ## Manual Install
 
@@ -92,21 +102,3 @@ cargo build --release
 
 Binary outputs to `target/release/udp-forwarder`.
 
-## Versioning
-
-Version is tracked in `Cargo.toml` and embedded in the binary.
-
-```bash
-./bump-version.sh patch   # 0.1.0 → 0.1.1
-./bump-version.sh minor   # 0.1.0 → 0.2.0
-./bump-version.sh major   # 0.1.0 → 1.0.0
-```
-
-## Releasing
-
-1. Bump the version: `./bump-version.sh patch`
-2. Commit the change
-3. Tag: `git tag v<version>`
-4. Push: `git push && git push --tags`
-
-The GitHub Actions workflow builds for Windows (x86_64), Linux (x86_64), and macOS (ARM), then creates a GitHub Release with zipped artifacts containing the binary and a default `config.ini`.
