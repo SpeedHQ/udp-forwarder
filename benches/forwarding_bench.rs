@@ -21,6 +21,7 @@ const GAMES: &[Game] = &[
     Game { name: "F1 24",           packet_size: 1460 },
     Game { name: "LMU / rFactor 2", packet_size: 1684 },
     Game { name: "iRacing",         packet_size: 2048 },
+    Game { name: "Max UDP",         packet_size: 8192 },
 ];
 
 fn main() {
@@ -41,7 +42,7 @@ fn main() {
 
     let mut results = Vec::new();
     for (i, game) in GAMES.iter().enumerate() {
-        let port_offset = (i as u16) * 100;
+        let port_offset = (i as u16) * 200;
         let r = run_test(&binary, game, 19100 + port_offset, 19200 + port_offset);
         results.push(r);
     }

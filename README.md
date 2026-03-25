@@ -72,17 +72,17 @@ The benchmark is a black-box smoke test that spawns the actual binary in headles
 
 **Per-game latency** (5 targets at 100 pkt/s, tested on M5 MacBook Pro):
 
-| | Forza Motorsport | ACC | F1 24 | LMU / rFactor 2 | iRacing |
-|---|---|---|---|---|---|
-| Packet size | 331 bytes | 608 bytes | 1460 bytes | 1684 bytes | 2048 bytes |
-| Avg | 51µs | 53µs | 53µs | 57µs | 55µs |
-| P50 | 49µs | 50µs | 51µs | 55µs | 53µs |
-| P95 | 79µs | 86µs | 84µs | 90µs | 88µs |
-| P99 | 94µs | 102µs | 99µs | 105µs | 106µs |
-| Max | 106µs | 131µs | 135µs | 179µs | 117µs |
-| Delivery | 100% | 100% | 100% | 100% | 100% |
+| | Forza Motorsport | ACC | F1 24 | LMU / rFactor 2 | iRacing | Max UDP |
+|---|---|---|---|---|---|---|
+| Packet size | 331 bytes | 608 bytes | 1460 bytes | 1684 bytes | 2048 bytes | 8192 bytes |
+| Avg | 68µs | 67µs | 53µs | 63µs | 67µs | 71µs |
+| P50 | 64µs | 64µs | 51µs | 60µs | 63µs | 70µs |
+| P95 | 109µs | 106µs | 84µs | 100µs | 107µs | 111µs |
+| P99 | 128µs | 129µs | 99µs | 120µs | 124µs | 135µs |
+| Max | 158µs | 150µs | 137µs | 181µs | 145µs | 147µs |
+| Delivery | 100% | 100% | 100% | 100% | 100% | 100% |
 
-Zero packet loss across all games. Sub-110µs P99 regardless of packet size.
+Zero packet loss across all games. Sub-135µs P99 even at 8KB packets.
 
 ## Building from Source
 
