@@ -1,8 +1,9 @@
-import { Button, LineEdit, GroupBox, VerticalBox, HorizontalBox, ListView, ScrollView } from "std-widgets.slint";
+import { Button, LineEdit, VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
 
 struct ForwardTarget {
     ip: string,
     port: string,
+    note: string,
 }
 
 export global AppState {
@@ -13,6 +14,7 @@ export global AppState {
     in-out property <bool> running: false;
     in-out property <string> status-text: "Stopped";
     in-out property <int> packets-forwarded: 0;
+    in-out property <string> version: "";
 
     callback start();
     callback stop();
@@ -21,20 +23,22 @@ export global AppState {
     callback save-config();
     callback update-target-ip(int, string);
     callback update-target-port(int, string);
+    callback update-target-note(int, string);
 }
 
 component TargetRow inherits HorizontalLayout {
     in property <int> index;
     in-out property <string> ip;
     in-out property <string> port;
-    in property <bool> editable: true;
+    in-out property <string> note;
+    height: 36px;
     spacing: 8px;
+    padding-right: 12px;
 
     LineEdit {
         placeholder-text: "IP address";
         text: ip;
-        enabled: editable;
-        horizontal-stretch: 3;
+        horizontal-stretch: 2;
         edited(value) => {
             AppState.update-target-ip(index, value);
         }
@@ -42,6 +46,7 @@ component TargetRow inherits HorizontalLayout {
 
     Text {
         text: ":";
+        color: #a1a1aa;
         vertical-alignment: center;
         horizontal-stretch: 0;
     }
@@ -49,7 +54,6 @@ component TargetRow inherits HorizontalLayout {
     LineEdit {
         placeholder-text: "Port";
         text: port;
-        enabled: editable;
         input-type: number;
         horizontal-stretch: 1;
         edited(value) => {
@@ -57,9 +61,17 @@ component TargetRow inherits HorizontalLayout {
         }
     }
 
+    LineEdit {
+        placeholder-text: "Note";
+        text: note;
+        horizontal-stretch: 2;
+        edited(value) => {
+            AppState.update-target-note(index, value);
+        }
+    }
+
     Button {
         text: "Remove";
-        enabled: editable;
         clicked => {
             AppState.remove-target(index);
         }
@@ -67,110 +79,98 @@ component TargetRow inherits HorizontalLayout {
 }
 
 export component MainWindow inherits Window {
-    title: "UDP Forwarder";
-    width: 480px;
-    height: 420px;
-    background: #1a1a2e;
+    title: "UDP Forwarder by Race HQ";
+    preferred-width: 480px;
+    preferred-height: 380px;
+    background: #09090b;
 
     VerticalBox {
-        padding: 16px;
-        spacing: 12px;
+        padding: 20px;
+        spacing: 16px;
 
-        // Header
-        Text {
-            text: "UDP Forwarder";
-            font-size: 20px;
-            font-weight: 700;
-            color: #e0e0e0;
-            horizontal-alignment: center;
-        }
-
-        // Listen port
-        GroupBox {
-            title: "Listen Port";
-
-            HorizontalLayout {
-                spacing: 8px;
-                padding: 4px;
-
-                LineEdit {
-                    text <=> AppState.listen-port;
-                    input-type: number;
-                    placeholder-text: "5300";
-                    enabled: !AppState.running;
-                    horizontal-stretch: 1;
-                }
+        HorizontalLayout {
+            Text {
+                text: "UDP Forwarder by Race HQ";
+                font-size: 18px;
+                font-weight: 700;
+                color: #fafafa;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: AppState.version;
+                font-size: 12px;
+                color: #a1a1aa;
+                vertical-alignment: center;
             }
         }
 
-        // Forwarding targets
-        GroupBox {
-            title: "Forward To";
+        // Listen port
+        Text { text: "Listen Port"; color: #a1a1aa; font-size: 12px; }
+        HorizontalLayout {
+            height: 36px;
+            spacing: 8px;
+
+            LineEdit {
+                text <=> AppState.listen-port;
+                input-type: number;
+                placeholder-text: "5300";
+                horizontal-stretch: 1;
+            }
+        }
+
+        // Targets
+        Text { text: "Forward To"; color: #a1a1aa; font-size: 12px; }
+
+        ScrollView {
             vertical-stretch: 1;
 
             VerticalLayout {
                 spacing: 8px;
-                padding: 4px;
 
                 for target[index] in AppState.targets : TargetRow {
                     index: index;
                     ip: target.ip;
                     port: target.port;
-                    editable: !AppState.running;
-                }
-
-                Button {
-                    text: "+ Add Target";
-                    enabled: !AppState.running;
-                    clicked => {
-                        AppState.add-target();
-                    }
+                    note: target.note;
                 }
             }
         }
 
-        // Status
         HorizontalLayout {
+            height: 36px;
             spacing: 8px;
-            alignment: center;
+
+            Rectangle { horizontal-stretch: 1; }
+
+            Button {
+                text: "+ Add Target";
+                clicked => { AppState.add-target(); }
+            }
+        }
+
+        // Status + Save
+        HorizontalLayout {
+            height: 36px;
+            spacing: 8px;
 
             Rectangle {
                 width: 10px;
                 height: 10px;
                 border-radius: 5px;
-                background: AppState.running ? #4caf50 : #666;
+                background: AppState.running ? #22c55e : #3f3f46;
                 y: (parent.height - self.height) / 2;
             }
 
             Text {
                 text: AppState.status-text;
-                color: #b0b0b0;
+                color: #a1a1aa;
                 vertical-alignment: center;
-            }
-        }
-
-        // Controls
-        HorizontalLayout {
-            spacing: 8px;
-            alignment: center;
-
-            Button {
-                text: AppState.running ? "Stop" : "Start";
-                clicked => {
-                    if (AppState.running) {
-                        AppState.stop();
-                    } else {
-                        AppState.start();
-                    }
-                }
+                horizontal-stretch: 1;
             }
 
             Button {
-                text: "Save Config";
-                enabled: !AppState.running;
-                clicked => {
-                    AppState.save-config();
-                }
+                text: "Save & Apply";
+                clicked => { AppState.save-config(); }
             }
         }
     }

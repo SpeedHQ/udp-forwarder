@@ -1,15 +1,75 @@
+use crossbeam_channel::{self, Sender};
 use ini::Ini;
 use slint::{Model, ModelRc, SharedString, VecModel};
 use std::env;
 use std::net::{SocketAddr, UdpSocket};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 slint::include_modules!();
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const SOCKET_BUF_SIZE: usize = 4 * 1024 * 1024; // 4MB socket buffer
+
+/// Lock-free broadcast ring buffer. One writer, N readers.
+/// Eliminates per-target channel sends — single write, all readers see it.
+struct BroadcastRing {
+    slots: Vec<Mutex<Vec<u8>>>,
+    head: AtomicUsize,
+    capacity: usize,
+}
+
+impl BroadcastRing {
+    fn new(capacity: usize) -> Self {
+        let slots = (0..capacity)
+            .map(|_| Mutex::new(Vec::with_capacity(65535)))
+            .collect();
+        Self {
+            slots,
+            head: AtomicUsize::new(0),
+            capacity,
+        }
+    }
+
+    fn publish(&self, data: &[u8]) -> usize {
+        let slot = self.head.fetch_add(1, Ordering::Release);
+        let idx = slot % self.capacity;
+        let mut buf = self.slots[idx].lock().unwrap();
+        buf.clear();
+        buf.extend_from_slice(data);
+        slot
+    }
+
+    fn read(&self, slot: usize) -> Vec<u8> {
+        let idx = slot % self.capacity;
+        let buf = self.slots[idx].lock().unwrap();
+        buf.clone()
+    }
+}
+
+fn tune_socket(sock: &UdpSocket) {
+    use std::os::fd::AsRawFd;
+    let fd = sock.as_raw_fd();
+    let size = SOCKET_BUF_SIZE as libc::c_int;
+    unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVBUF,
+            &size as *const _ as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        );
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            &size as *const _ as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        );
+    }
+}
 
 fn config_path() -> PathBuf {
     let arg_path = env::args()
@@ -30,7 +90,7 @@ fn config_path() -> PathBuf {
 
 struct Config {
     listen_port: u16,
-    targets: Vec<(String, u16)>,
+    targets: Vec<(String, u16, String)>,
 }
 
 fn load_config(path: &PathBuf) -> Option<Config> {
@@ -47,21 +107,24 @@ fn load_config(path: &PathBuf) -> Option<Config> {
         let section = conf.section(Some(section_name))?;
         let ip = section.get("ip")?;
         let port: u16 = section.get("port")?.parse().ok()?;
-        targets.push((ip.to_string(), port));
+        let note = section.get("note").unwrap_or("").to_string();
+        targets.push((ip.to_string(), port, note));
     }
 
     Some(Config { listen_port, targets })
 }
 
-fn save_config(path: &PathBuf, listen_port: &str, targets: &[(String, String)]) {
+fn save_config(path: &PathBuf, listen_port: &str, targets: &[(String, String, String)]) {
     let mut conf = Ini::new();
     conf.with_section(Some("general"))
         .set("listen_port", listen_port);
 
-    for (i, (ip, port)) in targets.iter().enumerate() {
-        conf.with_section(Some(format!("forward.{}", i + 1)))
-            .set("ip", ip)
-            .set("port", port);
+    for (i, (ip, port, note)) in targets.iter().enumerate() {
+        let mut section = conf.with_section(Some(format!("forward.{}", i + 1)));
+        section.set("ip", ip).set("port", port);
+        if !note.is_empty() {
+            section.set("note", note);
+        }
     }
 
     if let Err(e) = conf.write_to_file(path) {
@@ -83,7 +146,7 @@ fn run_headless(config_path: PathBuf) {
     let targets: Vec<SocketAddr> = config
         .targets
         .iter()
-        .map(|(ip, port)| {
+        .map(|(ip, port, _note)| {
             format!("{}:{}", ip, port).parse().unwrap_or_else(|e| {
                 eprintln!("Invalid address {}:{} — {}", ip, port, e);
                 std::process::exit(1);
@@ -96,10 +159,42 @@ fn run_headless(config_path: PathBuf) {
         eprintln!("Failed to bind to {}: {}", bind_addr, e);
         std::process::exit(1);
     });
+    tune_socket(&socket);
 
     println!("Listening on UDP port {}", config.listen_port);
+
+    // Broadcast ring buffer — single write, all sender threads read
+    let ring = Arc::new(BroadcastRing::new(4096));
+    let head = Arc::new(AtomicU64::new(0));
+
     for target in &targets {
+        let target = *target;
+        let ring = ring.clone();
+        let head = head.clone();
+        let sock = UdpSocket::bind("0.0.0.0:0").unwrap_or_else(|e| {
+            eprintln!("Failed to create send socket: {}", e);
+            std::process::exit(1);
+        });
+        tune_socket(&sock);
+        sock.connect(target).unwrap_or_else(|e| {
+            eprintln!("Failed to connect to {}: {}", target, e);
+            std::process::exit(1);
+        });
         println!("  Forwarding to {}", target);
+
+        thread::spawn(move || {
+            let mut cursor: u64 = 0;
+            loop {
+                let current = head.load(Ordering::Acquire);
+                if cursor < current {
+                    let data = ring.read(cursor as usize);
+                    let _ = sock.send(&data);
+                    cursor += 1;
+                } else {
+                    thread::yield_now();
+                }
+            }
+        });
     }
 
     let mut buf = [0u8; 65535];
@@ -112,12 +207,8 @@ fn run_headless(config_path: PathBuf) {
             }
         };
 
-        let data = &buf[..len];
-        for target in &targets {
-            if let Err(e) = socket.send_to(data, target) {
-                eprintln!("Failed to forward to {}: {}", target, e);
-            }
-        }
+        ring.publish(&buf[..len]);
+        head.fetch_add(1, Ordering::Release);
     }
 }
 
@@ -137,6 +228,7 @@ fn main() {
 
     // --- GUI mode ---
     let main_window = MainWindow::new().unwrap();
+    main_window.global::<AppState>().set_version(SharedString::from(format!("v{}", VERSION)));
     let config_file = config_path();
 
     // Load existing config into UI
@@ -147,9 +239,10 @@ fn main() {
         let targets: Vec<ForwardTarget> = config
             .targets
             .iter()
-            .map(|(ip, port)| ForwardTarget {
+            .map(|(ip, port, note)| ForwardTarget {
                 ip: SharedString::from(ip.as_str()),
                 port: SharedString::from(port.to_string()),
+                note: SharedString::from(note.as_str()),
             })
             .collect();
         state.set_targets(ModelRc::new(VecModel::from(targets)));
@@ -157,6 +250,7 @@ fn main() {
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let packet_count = Arc::new(AtomicU64::new(0));
+    let thread_handle: Arc<Mutex<Option<thread::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
 
     // Add target
     {
@@ -171,6 +265,7 @@ fn main() {
             targets.push(ForwardTarget {
                 ip: SharedString::from("127.0.0.1"),
                 port: SharedString::from("5300"),
+                note: SharedString::from(""),
             });
             state.set_targets(ModelRc::new(VecModel::from(targets)));
         });
@@ -227,23 +322,49 @@ fn main() {
         });
     }
 
+    // Update target note
+    {
+        let w = main_window.as_weak();
+        main_window.global::<AppState>().on_update_target_note(move |index, value| {
+            let w = w.upgrade().unwrap();
+            let state = w.global::<AppState>();
+            let model = state.get_targets();
+            let mut targets: Vec<ForwardTarget> = (0..model.row_count())
+                .map(|i| model.row_data(i).unwrap())
+                .collect();
+            if let Some(target) = targets.get_mut(index as usize) {
+                target.note = value;
+            }
+            state.set_targets(ModelRc::new(VecModel::from(targets)));
+        });
+    }
+
     // Save config
     {
         let w = main_window.as_weak();
         let path = config_file.clone();
+        let stop = stop_flag.clone();
+        let handle = thread_handle.clone();
         main_window.global::<AppState>().on_save_config(move || {
             let w = w.upgrade().unwrap();
             let state = w.global::<AppState>();
             let listen_port = state.get_listen_port().to_string();
             let model = state.get_targets();
-            let targets: Vec<(String, String)> = (0..model.row_count())
+            let targets: Vec<(String, String, String)> = (0..model.row_count())
                 .map(|i| {
                     let t = model.row_data(i).unwrap();
-                    (t.ip.to_string(), t.port.to_string())
+                    (t.ip.to_string(), t.port.to_string(), t.note.to_string())
                 })
                 .collect();
             save_config(&path, &listen_port, &targets);
-            state.set_status_text(SharedString::from("Config saved"));
+            state.set_status_text(SharedString::from("Config saved, restarting..."));
+            // Stop current forwarder and wait for thread to release the port
+            stop.store(true, Ordering::Relaxed);
+            if let Some(h) = handle.lock().unwrap().take() {
+                let _ = h.join();
+            }
+            state.set_running(false);
+            state.invoke_start();
         });
     }
 
@@ -252,6 +373,7 @@ fn main() {
         let w = main_window.as_weak();
         let stop_flag = stop_flag.clone();
         let packet_count = packet_count.clone();
+        let handle = thread_handle.clone();
 
         main_window.global::<AppState>().on_start(move || {
             let w_inner = w.upgrade().unwrap();
@@ -295,6 +417,25 @@ fn main() {
 
             socket.set_read_timeout(Some(std::time::Duration::from_millis(500))).ok();
 
+            // Spawn dedicated sender threads with connected + tuned sockets
+            let senders: Vec<Sender<Arc<[u8]>>> = targets
+                .iter()
+                .map(|target| {
+                    let target = *target;
+                    let (tx, rx) = crossbeam_channel::bounded::<Arc<[u8]>>(1024);
+                    let sock = UdpSocket::bind("0.0.0.0:0").expect("Failed to create send socket");
+                    tune_socket(&sock);
+                    sock.connect(target).expect("Failed to connect send socket");
+                    thread::spawn(move || {
+                        while let Ok(data) = rx.recv() {
+                            let _ = sock.send(&data);
+                        }
+                    });
+                    tx
+                })
+                .collect();
+
+            tune_socket(&socket);
             stop_flag.store(false, Ordering::Relaxed);
             packet_count.store(0, Ordering::Relaxed);
             state.set_running(true);
@@ -304,11 +445,13 @@ fn main() {
             let stop = stop_flag.clone();
             let count = packet_count.clone();
             let w2 = w.clone();
+            let handle = handle.clone();
 
-            thread::spawn(move || {
+            let h = thread::spawn(move || {
                 let mut buf = [0u8; 65535];
                 loop {
                     if stop.load(Ordering::Relaxed) {
+                        drop(senders);
                         break;
                     }
 
@@ -319,9 +462,9 @@ fn main() {
                         Err(_) => continue,
                     };
 
-                    let data = &buf[..len];
-                    for target in &targets {
-                        let _ = socket.send_to(data, target);
+                    let data: Arc<[u8]> = Arc::from(&buf[..len]);
+                    for tx in &senders {
+                        let _ = tx.try_send(Arc::clone(&data));
                     }
 
                     let n = count.fetch_add(1, Ordering::Relaxed) + 1;
@@ -342,6 +485,7 @@ fn main() {
                     state.set_status_text(SharedString::from("Stopped"));
                 });
             });
+            *handle.lock().unwrap() = Some(h);
         });
     }
 
@@ -351,6 +495,14 @@ fn main() {
         main_window.global::<AppState>().on_stop(move || {
             stop_flag.store(true, Ordering::Relaxed);
         });
+    }
+
+    // Auto-start forwarding if config has targets
+    {
+        let state = main_window.global::<AppState>();
+        if state.get_targets().row_count() > 0 {
+            state.invoke_start();
+        }
     }
 
     main_window.run().unwrap();

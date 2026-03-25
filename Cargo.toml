@@ -5,7 +5,19 @@ edition = "2021"
 
 [dependencies]
 rust-ini = "0.21"
-slint = "1.9"
+crossbeam-channel = "0.5"
+libc = "0.2"
+slint = { version = "1.9", default-features = false, features = ["compat-1-2", "backend-winit", "renderer-software", "std"] }
 
 [build-dependencies]
 slint-build = "1.9"
+
+[[bench]]
+name = "forwarding_bench"
+harness = false
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

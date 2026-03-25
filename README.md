@@ -62,6 +62,25 @@ Each zip contains the binary and a default `config.ini`.
 
 **macOS note:** Remove the quarantine attribute after extracting: `xattr -d com.apple.quarantine udp-forwarder`
 
+## Performance
+
+Architecture uses parallel fan-out with one dedicated sender thread per target, connected UDP sockets, 4MB socket buffers, and zero-copy `Arc` data sharing.
+
+Run the benchmark: `cargo bench --bench forwarding_bench`
+
+**Latency** (500-byte packets at 100 pkt/s, measured on Apple Silicon):
+
+| | 10 targets | 20 targets | 100 targets |
+|---|---|---|---|
+| Avg | 71µs | 107µs | 382µs |
+| P50 | 68µs | 100µs | 379µs |
+| P95 | 120µs | 197µs | 547µs |
+| P99 | 145µs | 234µs | 841µs |
+| Max | 277µs | 279µs | 968µs |
+| Delivery | 100% | 100% | 100% |
+
+Zero packet loss across all configurations. At 100 targets, P99 stays under 1ms.
+
 ## Building from Source
 
 ```bash
