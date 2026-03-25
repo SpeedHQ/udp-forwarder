@@ -9,7 +9,7 @@ libc = "0.2"
 auto-launch = "0.6"
 open = "5"
 slint = { version = "1.9", default-features = false, features = ["compat-1-2", "backend-winit", "renderer-software", "std"] }
-tray-icon = "0.19"
+tray-icon = "0.21"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [build-dependencies]
