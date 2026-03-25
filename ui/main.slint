@@ -27,6 +27,7 @@ export global AppState {
     callback update-target-ip(int, string);
     callback update-target-port(int, string);
     callback update-target-note(int, string);
+    callback open-github();
 }
 
 component TargetRow inherits HorizontalLayout {
@@ -58,7 +59,7 @@ component TargetRow inherits HorizontalLayout {
         placeholder-text: "Port";
         text: port;
         input-type: number;
-        horizontal-stretch: 1;
+        width: 60px;
         edited(value) => {
             AppState.update-target-port(index, value);
         }
@@ -82,8 +83,10 @@ component TargetRow inherits HorizontalLayout {
 }
 
 export component MainWindow inherits Window {
-    title: "UDP Forwarder by Race HQ";
-    preferred-width: 480px;
+    title: "UDP Forwarder by SpeedHQ";
+    min-width: 480px;
+    min-height: 300px;
+    preferred-width: 680px;
     preferred-height: 380px;
     background: #09090b;
 
@@ -92,18 +95,34 @@ export component MainWindow inherits Window {
         spacing: 16px;
 
         HorizontalLayout {
+            spacing: 8px;
             Text {
-                text: "UDP Forwarder by Race HQ";
+                text: "UDP Forwarder by SpeedHQ";
                 font-size: 18px;
                 font-weight: 700;
                 color: #fafafa;
-                horizontal-stretch: 1;
             }
             Text {
                 text: AppState.version;
                 font-size: 12px;
                 color: #a1a1aa;
                 vertical-alignment: center;
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { AppState.open-github(); }
+                Text {
+                    text: "GitHub";
+                    font-size: 12px;
+                    color: #60a5fa;
+                    vertical-alignment: center;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            CheckBox {
+                text: "Launch on startup";
+                checked: AppState.launch-on-startup;
+                toggled => { AppState.toggle-launch-on-startup(self.checked); }
             }
         }
 
@@ -117,8 +136,9 @@ export component MainWindow inherits Window {
                 text <=> AppState.listen-port;
                 input-type: number;
                 placeholder-text: "5300";
-                horizontal-stretch: 1;
+                width: 60px;
             }
+            Rectangle { horizontal-stretch: 1; }
         }
 
         // Targets
@@ -168,7 +188,6 @@ export component MainWindow inherits Window {
                 text: AppState.status-text;
                 color: #a1a1aa;
                 vertical-alignment: center;
-                horizontal-stretch: 1;
             }
 
             if AppState.running : Text {
@@ -178,19 +197,11 @@ export component MainWindow inherits Window {
                 vertical-alignment: center;
             }
 
+            Rectangle { horizontal-stretch: 1; }
+
             Button {
                 text: "Save & Apply";
                 clicked => { AppState.save-config(); }
-            }
-        }
-
-        // Launch on startup
-        HorizontalLayout {
-            height: 24px;
-            CheckBox {
-                text: "Launch on startup";
-                checked: AppState.launch-on-startup;
-                toggled => { AppState.toggle-launch-on-startup(self.checked); }
             }
         }
     }

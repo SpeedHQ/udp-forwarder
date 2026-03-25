@@ -266,6 +266,9 @@ fn main() {
     // --- GUI mode ---
     let main_window = MainWindow::new().unwrap();
     main_window.global::<AppState>().set_version(SharedString::from(format!("v{}", VERSION)));
+    main_window.global::<AppState>().on_open_github(|| {
+        let _ = open::that("https://github.com/SpeedHQ/udp-forwarder");
+    });
     let config_file = config_path();
 
     // Load existing config into UI
@@ -326,54 +329,42 @@ fn main() {
         });
     }
 
-    // Update target IP
+    // Update target IP (in-place to preserve focus)
     {
         let w = main_window.as_weak();
         main_window.global::<AppState>().on_update_target_ip(move |index, value| {
             let w = w.upgrade().unwrap();
-            let state = w.global::<AppState>();
-            let model = state.get_targets();
-            let mut targets: Vec<ForwardTarget> = (0..model.row_count())
-                .map(|i| model.row_data(i).unwrap())
-                .collect();
-            if let Some(target) = targets.get_mut(index as usize) {
+            let model = w.global::<AppState>().get_targets();
+            if let Some(mut target) = model.row_data(index as usize) {
                 target.ip = value;
+                model.set_row_data(index as usize, target);
             }
-            state.set_targets(ModelRc::new(VecModel::from(targets)));
         });
     }
 
-    // Update target port
+    // Update target port (in-place to preserve focus)
     {
         let w = main_window.as_weak();
         main_window.global::<AppState>().on_update_target_port(move |index, value| {
             let w = w.upgrade().unwrap();
-            let state = w.global::<AppState>();
-            let model = state.get_targets();
-            let mut targets: Vec<ForwardTarget> = (0..model.row_count())
-                .map(|i| model.row_data(i).unwrap())
-                .collect();
-            if let Some(target) = targets.get_mut(index as usize) {
+            let model = w.global::<AppState>().get_targets();
+            if let Some(mut target) = model.row_data(index as usize) {
                 target.port = value;
+                model.set_row_data(index as usize, target);
             }
-            state.set_targets(ModelRc::new(VecModel::from(targets)));
         });
     }
 
-    // Update target note
+    // Update target note (in-place to preserve focus)
     {
         let w = main_window.as_weak();
         main_window.global::<AppState>().on_update_target_note(move |index, value| {
             let w = w.upgrade().unwrap();
-            let state = w.global::<AppState>();
-            let model = state.get_targets();
-            let mut targets: Vec<ForwardTarget> = (0..model.row_count())
-                .map(|i| model.row_data(i).unwrap())
-                .collect();
-            if let Some(target) = targets.get_mut(index as usize) {
+            let model = w.global::<AppState>().get_targets();
+            if let Some(mut target) = model.row_data(index as usize) {
                 target.note = value;
+                model.set_row_data(index as usize, target);
             }
-            state.set_targets(ModelRc::new(VecModel::from(targets)));
         });
     }
 
