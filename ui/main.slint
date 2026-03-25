@@ -17,6 +17,7 @@ export global AppState {
     in-out property <int> packets-per-second: 0;
     in-out property <string> version: "";
     in-out property <bool> launch-on-startup: false;
+    in-out property <bool> minimize-to-tray: false;
 
     callback start();
     callback stop();
@@ -24,6 +25,7 @@ export global AppState {
     callback remove-target(int);
     callback save-config();
     callback toggle-launch-on-startup(bool);
+    callback toggle-minimize-to-tray(bool);
     callback update-target-ip(int, string);
     callback update-target-port(int, string);
     callback update-target-note(int, string);
@@ -119,6 +121,11 @@ export component MainWindow inherits Window {
                 }
             }
             Rectangle { horizontal-stretch: 1; }
+            CheckBox {
+                text: "Minimize to tray";
+                checked: AppState.minimize-to-tray;
+                toggled => { AppState.toggle-minimize-to-tray(self.checked); }
+            }
             CheckBox {
                 text: "Launch on startup";
                 checked: AppState.launch-on-startup;

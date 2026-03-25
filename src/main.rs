@@ -95,6 +95,7 @@ struct Config {
     listen_port: u16,
     targets: Vec<(String, u16, String)>,
     launch_on_startup: bool,
+    minimize_to_tray: bool,
 }
 
 fn load_config(path: &PathBuf) -> Option<Config> {
@@ -102,6 +103,7 @@ fn load_config(path: &PathBuf) -> Option<Config> {
     let general = conf.section(Some("general"))?;
     let listen_port: u16 = general.get("listen_port")?.parse().ok()?;
     let launch_on_startup = general.get("launch_on_startup").map_or(false, |v| v == "true");
+    let minimize_to_tray = general.get("minimize_to_tray").map_or(false, |v| v == "true");
 
     let mut targets = Vec::new();
     for (key, _) in conf.iter() {
@@ -116,14 +118,15 @@ fn load_config(path: &PathBuf) -> Option<Config> {
         targets.push((ip.to_string(), port, note));
     }
 
-    Some(Config { listen_port, targets, launch_on_startup })
+    Some(Config { listen_port, targets, launch_on_startup, minimize_to_tray })
 }
 
-fn save_config(path: &PathBuf, listen_port: &str, targets: &[(String, String, String)], launch_on_startup: bool) {
+fn save_config(path: &PathBuf, listen_port: &str, targets: &[(String, String, String)], launch_on_startup: bool, minimize_to_tray: bool) {
     let mut conf = Ini::new();
     conf.with_section(Some("general"))
         .set("listen_port", listen_port)
-        .set("launch_on_startup", launch_on_startup.to_string());
+        .set("launch_on_startup", launch_on_startup.to_string())
+        .set("minimize_to_tray", minimize_to_tray.to_string());
 
     for (i, (ip, port, note)) in targets.iter().enumerate() {
         let mut section = conf.with_section(Some(format!("forward.{}", i + 1)));
@@ -287,6 +290,7 @@ fn main() {
             .collect();
         state.set_targets(ModelRc::new(VecModel::from(targets)));
         state.set_launch_on_startup(config.launch_on_startup);
+        state.set_minimize_to_tray(config.minimize_to_tray);
     }
 
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -385,7 +389,26 @@ fn main() {
                     (t.ip.to_string(), t.port.to_string(), t.note.to_string())
                 })
                 .collect();
-            save_config(&path, &listen_port, &targets, enabled);
+            save_config(&path, &listen_port, &targets, enabled, state.get_minimize_to_tray());
+        });
+    }
+
+    // Toggle minimize to tray
+    {
+        let w = main_window.as_weak();
+        let path = config_file.clone();
+        main_window.global::<AppState>().on_toggle_minimize_to_tray(move |enabled| {
+            let w = w.upgrade().unwrap();
+            let state = w.global::<AppState>();
+            let listen_port = state.get_listen_port().to_string();
+            let model = state.get_targets();
+            let targets: Vec<(String, String, String)> = (0..model.row_count())
+                .map(|i| {
+                    let t = model.row_data(i).unwrap();
+                    (t.ip.to_string(), t.port.to_string(), t.note.to_string())
+                })
+                .collect();
+            save_config(&path, &listen_port, &targets, state.get_launch_on_startup(), enabled);
         });
     }
 
@@ -407,7 +430,7 @@ fn main() {
                 })
                 .collect();
             let launch_on_startup = state.get_launch_on_startup();
-            save_config(&path, &listen_port, &targets, launch_on_startup);
+            save_config(&path, &listen_port, &targets, launch_on_startup, state.get_minimize_to_tray());
             state.set_status_text(SharedString::from("Config saved, restarting..."));
             // Stop current forwarder and wait for thread to release the port
             stop.store(true, Ordering::Relaxed);
