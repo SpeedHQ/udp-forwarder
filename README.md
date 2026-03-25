@@ -2,65 +2,25 @@
 
 A lightweight UDP packet forwarder written in Rust. Listens on a single port and forwards all received packets to multiple destinations. Built as a companion to [RaceIQ](https://github.com/SpeedHQ/RaceIQ) for splitting Forza's UDP output to multiple consumers.
 
-## Download
+## Quick Start
 
-Grab the latest release for your platform from [Releases](https://github.com/SpeedHQ/udp-forwarder/releases):
+### macOS / Linux
 
-| Platform | File |
-|----------|------|
-| Windows (x86_64) | `udp-forwarder-v*-x86_64-pc-windows-msvc.zip` |
-| Linux (x86_64) | `udp-forwarder-v*-x86_64-unknown-linux-gnu.zip` |
-| macOS (Apple Silicon) | `udp-forwarder-v*-aarch64-apple-darwin.zip` |
+```bash
+curl -fsSL https://raw.githubusercontent.com/SpeedHQ/udp-forwarder/main/install.sh | bash
+```
 
-Each zip contains the binary and a default `config.ini`.
-
-## Usage
-
-### Windows
-
-1. Extract the zip
-2. Edit `config.ini` (see [Configuration](#configuration))
-3. Double-click `udp-forwarder.exe` or run from a terminal:
+### Windows (PowerShell)
 
 ```powershell
-.\udp-forwarder.exe                # uses config.ini next to the binary
-.\udp-forwarder.exe my-config.ini  # custom config path
-.\udp-forwarder.exe --version      # print version
+irm https://raw.githubusercontent.com/SpeedHQ/udp-forwarder/main/install.ps1 | iex
 ```
 
-### macOS
-
-1. Extract the zip
-2. Remove the quarantine attribute (unsigned binary):
-
-```bash
-xattr -d com.apple.quarantine udp-forwarder
-```
-
-3. Edit `config.ini` (see [Configuration](#configuration))
-4. Run:
-
-```bash
-./udp-forwarder                # uses config.ini next to the binary
-./udp-forwarder my-config.ini  # custom config path
-./udp-forwarder --version      # print version
-```
-
-### Linux
-
-1. Extract the zip
-2. Make executable and run:
-
-```bash
-chmod +x udp-forwarder
-./udp-forwarder                # uses config.ini next to the binary
-./udp-forwarder my-config.ini  # custom config path
-./udp-forwarder --version      # print version
-```
+Both installers download the latest release, install the binary, and create a `config.ini` in your current directory.
 
 ## Configuration
 
-Create a `config.ini` file (see `config.ini.example`):
+Edit `config.ini` to set the listen port and forwarding targets:
 
 ```ini
 [general]
@@ -78,7 +38,31 @@ port = 5300
 - `[general]` — `listen_port` is the UDP port to receive packets on
 - `[forward.*]` — any section starting with `forward` defines a target. Each needs `ip` and `port`
 
-## Building
+## Running
+
+```bash
+udp-forwarder                # uses config.ini next to the binary
+udp-forwarder my-config.ini  # custom config path
+udp-forwarder --version      # print version
+```
+
+On Windows, use `udp-forwarder.exe` or double-click the executable.
+
+## Manual Install
+
+If you prefer not to use the install script, grab a zip from [Releases](https://github.com/SpeedHQ/udp-forwarder/releases):
+
+| Platform | File |
+|----------|------|
+| Windows (x86_64) | `udp-forwarder-v*-x86_64-pc-windows-msvc.zip` |
+| Linux (x86_64) | `udp-forwarder-v*-x86_64-unknown-linux-gnu.zip` |
+| macOS (Apple Silicon) | `udp-forwarder-v*-aarch64-apple-darwin.zip` |
+
+Each zip contains the binary and a default `config.ini`.
+
+**macOS note:** Remove the quarantine attribute after extracting: `xattr -d com.apple.quarantine udp-forwarder`
+
+## Building from Source
 
 ```bash
 cargo build --release
