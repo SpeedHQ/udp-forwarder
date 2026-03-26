@@ -2,33 +2,76 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
 
 jobs:
+  bump:
+    runs-on: blacksmith-2vcpu-ubuntu-2204
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      sha: ${{ steps.push.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute new version
+        id: bump
+        shell: bash
+        run: |
+          CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          case "${{ inputs.bump }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW="${MAJOR}.${MINOR}.${PATCH}"
+          sed -i "s/^version = \"$CURRENT\"/version = \"$NEW\"/" Cargo.toml
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          echo "::notice::Version bump: $CURRENT → $NEW (${{ inputs.bump }})"
+
+      - name: Commit and push version bump
+        id: push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.version }}"
+          git push
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: bump
     uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ needs.bump.outputs.sha }}
     secrets: inherit
 
   release:
-    needs: build
+    needs: [bump, build]
     runs-on: blacksmith-2vcpu-ubuntu-2204
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Get version
-        id: version
-        shell: bash
-        run: |
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        with:
+          ref: main
 
       - name: Create tag
         run: |
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
+          git tag "v${{ needs.bump.outputs.version }}"
+          git push origin "v${{ needs.bump.outputs.version }}"
 
       - uses: actions/download-artifact@v4
         with:
@@ -38,8 +81,8 @@ jobs:
       - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: UDP Forwarder v${{ steps.version.outputs.version }}
+          tag_name: v${{ needs.bump.outputs.version }}
+          name: UDP Forwarder v${{ needs.bump.outputs.version }}
           files: artifacts/**/*
           generate_release_notes: true
           draft: true
