@@ -1,15 +1,68 @@
-import { Button, LineEdit, VerticalBox, HorizontalBox, ScrollView, CheckBox } from "std-widgets.slint";
+import { LineEdit, VerticalBox, HorizontalBox, ScrollView, CheckBox } from "std-widgets.slint";
+
+component BlueButton inherits Rectangle {
+    in property <string> text;
+    callback clicked;
+    height: 28px;
+    min-width: 80px;
+    border-radius: 6px;
+    background: ta.has-hover ? #2563eb : #3b82f6;
+    animate background { duration: 120ms; }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    VerticalLayout {
+        alignment: center;
+        HorizontalLayout {
+            alignment: center;
+            Text {
+                text: root.text;
+                color: #ffffff;
+                font-size: 12px;
+            }
+        }
+    }
+}
+
+component RedButton inherits Rectangle {
+    in property <string> text;
+    callback clicked;
+    height: 28px;
+    min-width: 70px;
+    border-radius: 6px;
+    background: ta.has-hover ? #dc2626 : #ef4444;
+    animate background { duration: 120ms; }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    VerticalLayout {
+        alignment: center;
+        HorizontalLayout {
+            alignment: center;
+            Text {
+                text: root.text;
+                color: #ffffff;
+                font-size: 12px;
+            }
+        }
+    }
+}
 
 struct ForwardTarget {
-    ip: string,
-    port: string,
+    address: string,
     note: string,
+    validation-error: string,
+    is-duplicate: bool,
 }
 
 export global AppState {
     in-out property <string> listen-port: "5300";
     in-out property <[ForwardTarget]> targets: [
-        { ip: "127.0.0.1", port: "5301" },
+        { address: "127.0.0.1:5301" },
     ];
     in-out property <bool> running: false;
     in-out property <string> status-text: "Stopped";
@@ -18,68 +71,82 @@ export global AppState {
     in-out property <string> version: "";
     in-out property <bool> launch-on-startup: false;
     in-out property <bool> minimize-to-tray: false;
+    in-out property <bool> has-pending-changes: false;
+    in-out property <bool> has-errors: false;
+    in-out property <string> error-text: "";
 
     callback start();
     callback stop();
     callback add-target();
     callback remove-target(int);
     callback save-config();
+    callback cancel-changes();
     callback toggle-launch-on-startup(bool);
     callback toggle-minimize-to-tray(bool);
-    callback update-target-ip(int, string);
-    callback update-target-port(int, string);
+    callback update-listen-port(string);
+    callback update-target-address(int, string);
     callback update-target-note(int, string);
     callback open-github();
 }
 
-component TargetRow inherits HorizontalLayout {
+component TargetRow inherits VerticalLayout {
     in property <int> index;
-    in-out property <string> ip;
-    in-out property <string> port;
+    in-out property <string> address;
     in-out property <string> note;
-    height: 36px;
-    spacing: 8px;
+    in property <string> validation-error;
+    in property <bool> is-duplicate;
+    spacing: 2px;
     padding-right: 12px;
 
-    LineEdit {
-        placeholder-text: "IP address";
-        text: ip;
-        horizontal-stretch: 2;
-        edited(value) => {
-            AppState.update-target-ip(index, value);
+    HorizontalLayout {
+        height: 36px;
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: is-duplicate ? #ef4444 : transparent;
+            }
+        }
+
+        LineEdit {
+            placeholder-text: "IP:Port (e.g. 127.0.0.1:5301)";
+            text: address;
+            horizontal-stretch: 2;
+            edited(value) => {
+                AppState.update-target-address(index, value);
+            }
+        }
+
+        LineEdit {
+            placeholder-text: "Note";
+            text: note;
+            horizontal-stretch: 2;
+            edited(value) => {
+                AppState.update-target-note(index, value);
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            RedButton {
+                text: "Remove";
+                clicked => {
+                    AppState.remove-target(index);
+                }
+            }
         }
     }
 
-    Text {
-        text: ":";
-        color: #a1a1aa;
-        vertical-alignment: center;
-        horizontal-stretch: 0;
-    }
-
-    LineEdit {
-        placeholder-text: "Port";
-        text: port;
-        input-type: number;
-        width: 60px;
-        edited(value) => {
-            AppState.update-target-port(index, value);
-        }
-    }
-
-    LineEdit {
-        placeholder-text: "Note";
-        text: note;
-        horizontal-stretch: 2;
-        edited(value) => {
-            AppState.update-target-note(index, value);
-        }
-    }
-
-    Button {
-        text: "Remove";
-        clicked => {
-            AppState.remove-target(index);
+    if validation-error != "" : HorizontalLayout {
+        height: 16px;
+        Text {
+            text: validation-error;
+            color: #ef4444;
+            font-size: 11px;
         }
     }
 }
@@ -135,22 +202,35 @@ export component MainWindow inherits Window {
         }
 
         // Listen port
-        Text { text: "Listen Port"; color: #a1a1aa; font-size: 12px; }
         HorizontalLayout {
             height: 36px;
             spacing: 8px;
 
+            Text { text: "Listen Port"; color: #a1a1aa; font-size: 12px; vertical-alignment: center; }
             LineEdit {
-                text <=> AppState.listen-port;
+                text: AppState.listen-port;
                 input-type: number;
                 placeholder-text: "5300";
                 width: 60px;
+                edited(value) => {
+                    AppState.update-listen-port(value);
+                }
             }
             Rectangle { horizontal-stretch: 1; }
         }
 
         // Targets
-        Text { text: "Forward To"; color: #a1a1aa; font-size: 12px; }
+        HorizontalLayout {
+            height: 30px;
+            spacing: 8px;
+
+            Text { text: "Forward To"; color: #a1a1aa; font-size: 12px; vertical-alignment: center; }
+            BlueButton {
+                text: "New Target";
+                clicked => { AppState.add-target(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
 
         ScrollView {
             vertical-stretch: 1;
@@ -160,22 +240,11 @@ export component MainWindow inherits Window {
 
                 for target[index] in AppState.targets : TargetRow {
                     index: index;
-                    ip: target.ip;
-                    port: target.port;
+                    address: target.address;
                     note: target.note;
+                    validation-error: target.validation-error;
+                    is-duplicate: target.is-duplicate;
                 }
-            }
-        }
-
-        HorizontalLayout {
-            height: 36px;
-            spacing: 8px;
-
-            Rectangle { horizontal-stretch: 1; }
-
-            Button {
-                text: "+ Add Target";
-                clicked => { AppState.add-target(); }
             }
         }
 
@@ -198,18 +267,62 @@ export component MainWindow inherits Window {
                 vertical-alignment: center;
             }
 
-            if AppState.running : Text {
+            if AppState.running && !AppState.has-errors : Text {
                 text: AppState.packets-per-second + " pkt/s";
                 color: #a1a1aa;
                 font-size: 12px;
                 vertical-alignment: center;
             }
 
+            if AppState.has-errors : Text {
+                text: AppState.error-text;
+                color: #ef4444;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+
             Rectangle { horizontal-stretch: 1; }
 
-            Button {
-                text: "Save & Apply";
-                clicked => { AppState.save-config(); }
+            if AppState.has-pending-changes : Rectangle {
+                height: 30px;
+                min-width: 70px;
+                border-radius: 6px;
+                background: cancel-ta.has-hover ? #dc2626 : #ef4444;
+                animate background { duration: 120ms; }
+
+                cancel-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { AppState.cancel-changes(); }
+                }
+                Text {
+                    text: "Cancel";
+                    color: #ffffff;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            Rectangle {
+                property <bool> can-save: AppState.has-pending-changes && !AppState.has-errors;
+                height: 30px;
+                min-width: 80px;
+                border-radius: 6px;
+                background: can-save ? (save-ta.has-hover ? #2563eb : #3b82f6) : #3f3f46;
+                animate background { duration: 120ms; }
+
+                save-ta := TouchArea {
+                    enabled: parent.can-save;
+                    mouse-cursor: parent.can-save ? pointer : default;
+                    clicked => { AppState.save-config(); }
+                }
+                Text {
+                    text: "Save & Apply";
+                    color: parent.can-save ? #ffffff : #71717a;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
         }
     }
