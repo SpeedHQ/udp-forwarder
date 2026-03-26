@@ -92,8 +92,10 @@ jobs:
           security list-keychain -d user -s "$KEYCHAIN_PATH"
 
       - name: Package macOS .app and .dmg
+        id: package
         if: matrix.target == 'aarch64-apple-darwin'
         env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -159,7 +161,7 @@ jobs:
 
           # Sign .app bundle
           codesign --force --deep --options runtime \
-              --sign "${APPLE_TEAM_ID}" \
+              --sign "${APPLE_SIGNING_IDENTITY}" \
               "$APP_DIR"
           codesign --verify --verbose "$APP_DIR"
 
@@ -175,13 +177,41 @@ jobs:
               "$APP_DIR"
 
           # Notarize .dmg
-          xcrun notarytool submit "$DMG_PATH" \
+          NOTARY_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" \
               --apple-id "$APPLE_ID" \
               --team-id "$APPLE_TEAM_ID" \
               --password "$APPLE_PASSWORD" \
-              --wait
+              --wait 2>&1) || true
 
-          xcrun stapler staple "$DMG_PATH"
+          echo "$NOTARY_OUTPUT"
+
+          SUBMISSION_ID=$(echo "$NOTARY_OUTPUT" | grep -o 'id: [a-f0-9-]*' | head -1 | cut -d' ' -f2)
+          echo "submission_id=$SUBMISSION_ID" >> $GITHUB_OUTPUT
+
+          if echo "$NOTARY_OUTPUT" | grep -q "status: Accepted"; then
+            echo "Stapling notarization ticket to DMG..."
+            xcrun stapler staple "$DMG_PATH"
+            echo "Notarization complete!"
+          else
+            echo "Notarization failed!"
+            exit 1
+          fi
+
+      - name: Fetch notarization log on failure
+        if: matrix.target == 'aarch64-apple-darwin' && failure()
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          SUBMISSION_ID="${{ steps.package.outputs.submission_id }}"
+          if [ -n "$SUBMISSION_ID" ]; then
+            echo "Fetching notarization log for submission: $SUBMISSION_ID"
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID"
+          fi
 
       - name: Clean up signing credentials
         if: matrix.target == 'aarch64-apple-darwin' && always()
