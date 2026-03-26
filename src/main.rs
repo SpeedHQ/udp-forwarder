@@ -2,7 +2,7 @@ use auto_launch::AutoLaunchBuilder;
 use ini::Ini;
 use slint::{Model, ModelRc, SharedString, VecModel};
 use std::env;
-use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{SocketAddr, UdpSocket};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -93,30 +93,9 @@ fn config_path() -> PathBuf {
     exe_dir.join("config.ini")
 }
 
-fn is_valid_host(host: &str) -> bool {
-    if host.is_empty() {
-        return false;
-    }
-    // Check if it's a valid IPv4 address
-    if host.chars().all(|c| c.is_ascii_digit() || c == '.') {
-        let octets: Vec<&str> = host.split('.').collect();
-        return octets.len() == 4
-            && octets.iter().all(|o| !o.is_empty() && o.parse::<u8>().is_ok());
-    }
-    // Hostname/domain: labels separated by dots
-    // Each label: alphanumeric + hyphens, can't start/end with hyphen, max 63 chars
-    host.split('.').all(|label| {
-        !label.is_empty()
-            && label.len() <= 63
-            && !label.starts_with('-')
-            && !label.ends_with('-')
-            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-    })
-}
-
 struct Config {
     listen_port: u16,
-    targets: Vec<(String, String)>, // (address, note)
+    targets: Vec<(String, u16, String)>,
     launch_on_startup: bool,
     minimize_to_tray: bool,
 }
@@ -135,24 +114,25 @@ fn load_config(path: &PathBuf) -> Option<Config> {
             _ => continue,
         };
         let section = conf.section(Some(section_name))?;
-        let address = section.get("address")?;
+        let ip = section.get("ip")?;
+        let port: u16 = section.get("port")?.parse().ok()?;
         let note = section.get("note").unwrap_or("").to_string();
-        targets.push((address.to_string(), note));
+        targets.push((ip.to_string(), port, note));
     }
 
     Some(Config { listen_port, targets, launch_on_startup, minimize_to_tray })
 }
 
-fn save_config(path: &PathBuf, listen_port: &str, targets: &[(String, String)], launch_on_startup: bool, minimize_to_tray: bool) {
+fn save_config(path: &PathBuf, listen_port: &str, targets: &[(String, String, String)], launch_on_startup: bool, minimize_to_tray: bool) {
     let mut conf = Ini::new();
     conf.with_section(Some("general"))
         .set("listen_port", listen_port)
         .set("launch_on_startup", launch_on_startup.to_string())
         .set("minimize_to_tray", minimize_to_tray.to_string());
 
-    for (i, (address, note)) in targets.iter().enumerate() {
+    for (i, (ip, port, note)) in targets.iter().enumerate() {
         let mut section = conf.with_section(Some(format!("forward.{}", i + 1)));
-        section.set("address", address);
+        section.set("ip", ip).set("port", port);
         if !note.is_empty() {
             section.set("note", note);
         }
@@ -233,14 +213,11 @@ fn run_headless(config_path: PathBuf) {
     let targets: Vec<SocketAddr> = config
         .targets
         .iter()
-        .map(|(address, _note)| {
-            address.to_socket_addrs()
-                .ok()
-                .and_then(|mut addrs| addrs.next())
-                .unwrap_or_else(|| {
-                    eprintln!("Cannot resolve {}", address);
-                    std::process::exit(1);
-                })
+        .map(|(ip, port, _note)| {
+            format!("{}:{}", ip, port).parse().unwrap_or_else(|e| {
+                eprintln!("Invalid address {}:{} — {}", ip, port, e);
+                std::process::exit(1);
+            })
         })
         .collect();
 
@@ -313,122 +290,6 @@ fn main() {
     });
     let config_file = config_path();
 
-    // Saved state for dirty checking — (listen_port, [(address, note)])
-    type SavedState = (String, Vec<(String, String)>);
-    let saved_state: Arc<Mutex<SavedState>> = Arc::new(Mutex::new(
-        ("5300".to_string(), vec![("127.0.0.1:5301".to_string(), "RaceIQ".to_string())])
-    ));
-
-    // Cancel changes — restore saved state
-    {
-        let w = main_window.as_weak();
-        let saved = saved_state.clone();
-        main_window.global::<AppState>().on_cancel_changes(move || {
-            let w = w.upgrade().unwrap();
-            let state = w.global::<AppState>();
-            let s = saved.lock().unwrap();
-            state.set_listen_port(SharedString::from(s.0.as_str()));
-            let targets: Vec<ForwardTarget> = s.1
-                .iter()
-                .map(|(address, note)| ForwardTarget {
-                    address: SharedString::from(address.as_str()),
-                    note: SharedString::from(note.as_str()),
-                    has_error: false,
-                })
-                .collect();
-            state.set_targets(ModelRc::new(VecModel::from(targets)));
-            state.set_validation_error(SharedString::from(""));
-            state.set_config_dirty(false);
-        });
-    }
-
-    // Check dirty — compare current UI state with saved state + validate
-    {
-        let w = main_window.as_weak();
-        let saved = saved_state.clone();
-        main_window.global::<AppState>().on_check_dirty(move || {
-            let w = w.upgrade().unwrap();
-            let state = w.global::<AppState>();
-            let s = saved.lock().unwrap();
-            let listen_port = state.get_listen_port().to_string();
-            let model = state.get_targets();
-            let mut current_targets: Vec<(String, String)> = Vec::new();
-            let mut seen = std::collections::HashMap::<String, Vec<usize>>::new();
-
-            let mut invalid_indices = std::collections::HashSet::new();
-
-            for i in 0..model.row_count() {
-                let t = model.row_data(i).unwrap();
-                let address = t.address.to_string();
-                let note = t.note.to_string();
-
-                // Validate address format: valid host:port
-                let has_scheme = address.starts_with("http://") || address.starts_with("https://");
-                let valid = if has_scheme {
-                    false
-                } else if let Some(colon) = address.rfind(':') {
-                    let host = &address[..colon];
-                    let port = &address[colon + 1..];
-                    is_valid_host(host) && port.parse::<u16>().is_ok()
-                } else {
-                    false
-                };
-
-                if !valid && !address.is_empty() {
-                    invalid_indices.insert(i);
-                }
-
-                seen.entry(address.clone()).or_default().push(i);
-                current_targets.push((address, note));
-            }
-
-            // Find which indices are duplicates
-            let mut dup_indices = std::collections::HashSet::new();
-            for indices in seen.values() {
-                if indices.len() > 1 {
-                    for &idx in indices {
-                        dup_indices.insert(idx);
-                    }
-                }
-            }
-
-            // Set validation error message
-            if !invalid_indices.is_empty() {
-                // Check if any invalid address has a scheme prefix
-                let has_scheme_error = invalid_indices.iter().any(|&i| {
-                    model.row_data(i).map_or(false, |t| {
-                        let a = t.address.to_string();
-                        a.starts_with("http://") || a.starts_with("https://")
-                    })
-                });
-                let msg = if has_scheme_error {
-                    "Remove http:// or https:// prefix"
-                } else {
-                    "Invalid address (use host:port)"
-                };
-                state.set_validation_error(SharedString::from(msg));
-            } else if !dup_indices.is_empty() {
-                state.set_validation_error(SharedString::from("Duplicate targets"));
-            } else {
-                state.set_validation_error(SharedString::from(""));
-            }
-
-            // Update error flags on individual rows to avoid resetting the model
-            for i in 0..model.row_count() {
-                if let Some(mut t) = model.row_data(i) {
-                    let should_error = dup_indices.contains(&i) || invalid_indices.contains(&i);
-                    if t.has_error != should_error {
-                        t.has_error = should_error;
-                        model.set_row_data(i, t);
-                    }
-                }
-            }
-
-            let dirty = listen_port != s.0 || current_targets != s.1;
-            state.set_config_dirty(dirty);
-        });
-    }
-
     // Load existing config into UI
     if let Some(config) = load_config(&config_file) {
         let state = main_window.global::<AppState>();
@@ -437,20 +298,15 @@ fn main() {
         let targets: Vec<ForwardTarget> = config
             .targets
             .iter()
-            .map(|(address, note)| ForwardTarget {
-                address: SharedString::from(address.as_str()),
+            .map(|(ip, port, note)| ForwardTarget {
+                ip: SharedString::from(ip.as_str()),
+                port: SharedString::from(port.to_string()),
                 note: SharedString::from(note.as_str()),
-                has_error: false,
             })
             .collect();
         state.set_targets(ModelRc::new(VecModel::from(targets)));
         state.set_launch_on_startup(config.launch_on_startup);
         state.set_minimize_to_tray(config.minimize_to_tray);
-
-        // Update saved state
-        let mut s = saved_state.lock().unwrap();
-        s.0 = config.listen_port.to_string();
-        s.1 = config.targets.clone();
     }
 
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -468,9 +324,9 @@ fn main() {
                 .map(|i| model.row_data(i).unwrap())
                 .collect();
             targets.push(ForwardTarget {
-                address: SharedString::from("127.0.0.1:5300"),
+                ip: SharedString::from("127.0.0.1"),
+                port: SharedString::from("5300"),
                 note: SharedString::from(""),
-                has_error: false,
             });
             state.set_targets(ModelRc::new(VecModel::from(targets)));
         });
@@ -493,14 +349,27 @@ fn main() {
         });
     }
 
-    // Update target address (in-place to preserve focus)
+    // Update target IP (in-place to preserve focus)
     {
         let w = main_window.as_weak();
-        main_window.global::<AppState>().on_update_target_address(move |index, value| {
+        main_window.global::<AppState>().on_update_target_ip(move |index, value| {
             let w = w.upgrade().unwrap();
             let model = w.global::<AppState>().get_targets();
             if let Some(mut target) = model.row_data(index as usize) {
-                target.address = value;
+                target.ip = value;
+                model.set_row_data(index as usize, target);
+            }
+        });
+    }
+
+    // Update target port (in-place to preserve focus)
+    {
+        let w = main_window.as_weak();
+        main_window.global::<AppState>().on_update_target_port(move |index, value| {
+            let w = w.upgrade().unwrap();
+            let model = w.global::<AppState>().get_targets();
+            if let Some(mut target) = model.row_data(index as usize) {
+                target.port = value;
                 model.set_row_data(index as usize, target);
             }
         });
@@ -530,10 +399,10 @@ fn main() {
             let state = w.global::<AppState>();
             let listen_port = state.get_listen_port().to_string();
             let model = state.get_targets();
-            let targets: Vec<(String, String)> = (0..model.row_count())
+            let targets: Vec<(String, String, String)> = (0..model.row_count())
                 .map(|i| {
                     let t = model.row_data(i).unwrap();
-                    (t.address.to_string(), t.note.to_string())
+                    (t.ip.to_string(), t.port.to_string(), t.note.to_string())
                 })
                 .collect();
             save_config(&path, &listen_port, &targets, enabled, state.get_minimize_to_tray());
@@ -549,10 +418,10 @@ fn main() {
             let state = w.global::<AppState>();
             let listen_port = state.get_listen_port().to_string();
             let model = state.get_targets();
-            let targets: Vec<(String, String)> = (0..model.row_count())
+            let targets: Vec<(String, String, String)> = (0..model.row_count())
                 .map(|i| {
                     let t = model.row_data(i).unwrap();
-                    (t.address.to_string(), t.note.to_string())
+                    (t.ip.to_string(), t.port.to_string(), t.note.to_string())
                 })
                 .collect();
             save_config(&path, &listen_port, &targets, state.get_launch_on_startup(), enabled);
@@ -565,26 +434,19 @@ fn main() {
         let path = config_file.clone();
         let stop = stop_flag.clone();
         let handle = thread_handle.clone();
-        let saved = saved_state.clone();
         main_window.global::<AppState>().on_save_config(move || {
             let w = w.upgrade().unwrap();
             let state = w.global::<AppState>();
             let listen_port = state.get_listen_port().to_string();
             let model = state.get_targets();
-            let targets: Vec<(String, String)> = (0..model.row_count())
+            let targets: Vec<(String, String, String)> = (0..model.row_count())
                 .map(|i| {
                     let t = model.row_data(i).unwrap();
-                    (t.address.to_string(), t.note.to_string())
+                    (t.ip.to_string(), t.port.to_string(), t.note.to_string())
                 })
                 .collect();
             let launch_on_startup = state.get_launch_on_startup();
             save_config(&path, &listen_port, &targets, launch_on_startup, state.get_minimize_to_tray());
-            // Update saved state
-            let mut s = saved.lock().unwrap();
-            s.0 = listen_port.clone();
-            s.1 = targets.clone();
-            drop(s);
-            state.set_config_dirty(false);
             state.set_status_text(SharedString::from("Config saved, restarting..."));
             // Stop current forwarder and wait for thread to release the port
             stop.store(true, Ordering::Relaxed);
@@ -619,11 +481,11 @@ fn main() {
             let mut targets: Vec<SocketAddr> = Vec::new();
             for i in 0..model.row_count() {
                 let t = model.row_data(i).unwrap();
-                let addr_str = t.address.to_string();
-                match addr_str.to_socket_addrs().ok().and_then(|mut a| a.next()) {
-                    Some(addr) => targets.push(addr),
-                    None => {
-                        state.set_status_text(SharedString::from(format!("Cannot resolve: {}", addr_str)));
+                let addr_str = format!("{}:{}", t.ip, t.port);
+                match addr_str.parse() {
+                    Ok(addr) => targets.push(addr),
+                    Err(_) => {
+                        state.set_status_text(SharedString::from(format!("Invalid target: {}", addr_str)));
                         return;
                     }
                 }
@@ -632,17 +494,6 @@ fn main() {
             if targets.is_empty() {
                 state.set_status_text(SharedString::from("Add at least one target"));
                 return;
-            }
-
-            // Check for duplicate targets
-            {
-                let mut seen = std::collections::HashSet::new();
-                for addr in &targets {
-                    if !seen.insert(addr) {
-                        state.set_status_text(SharedString::from(format!("Duplicate target: {}", addr)));
-                        return;
-                    }
-                }
             }
 
             let bind_addr = format!("0.0.0.0:{}", listen_port);
@@ -792,7 +643,8 @@ fn main() {
         main_window.window().on_close_requested(move || {
             if let Some(w) = w.upgrade() {
                 if w.global::<AppState>().get_minimize_to_tray() {
-                    return slint::CloseRequestResponse::HideWindow;
+                    w.window().hide().ok();
+                    return slint::CloseRequestResponse::KeepWindowShown;
                 }
             }
             slint::quit_event_loop().ok();
