@@ -112,12 +112,8 @@ fn load_config(path: &PathBuf) -> Option<Config> {
     let conf = Ini::load_from_file(path).ok()?;
     let general = conf.section(Some("general"))?;
     let listen_port: u16 = general.get("listen_port")?.parse().ok()?;
-    let launch_on_startup = general
-        .get("launch_on_startup")
-        .map_or(false, |v| v == "true");
-    let minimize_to_tray = general
-        .get("minimize_to_tray")
-        .map_or(false, |v| v == "true");
+    let launch_on_startup = general.get("launch_on_startup") == Some("true");
+    let minimize_to_tray = general.get("minimize_to_tray") == Some("true");
 
     let mut targets = Vec::new();
     for (key, _) in conf.iter() {
@@ -368,13 +364,13 @@ fn refresh_target_errors(state: &AppState) {
     state.set_has_errors(has_errors);
     if has_errors {
         let dup_count = (0..count)
-            .filter(|&i| model.row_data(i).map_or(false, |t| t.is_duplicate))
+            .filter(|&i| model.row_data(i).is_some_and(|t| t.is_duplicate))
             .count();
         let val_count = (0..count)
             .filter(|&i| {
                 model
                     .row_data(i)
-                    .map_or(false, |t| !t.validation_error.is_empty())
+                    .is_some_and(|t| !t.validation_error.is_empty())
             })
             .count();
         let msg = match (dup_count > 0, val_count > 0) {
@@ -1028,7 +1024,7 @@ fn main() {
                     if state.get_update_checked() {
                         if state.get_update_available() {
                             let ver = state.get_latest_version();
-                            update_item.set_text(&format!("Update {} available", ver));
+                            update_item.set_text(format!("Update {} available", ver));
                             update_item.set_enabled(true);
                         } else {
                             update_item.set_text("No updates available");
