@@ -90,20 +90,23 @@ fn tune_socket(sock: &UdpSocket) {
 #[cfg(windows)]
 fn tune_socket(sock: &UdpSocket) {
     use std::os::windows::io::AsRawSocket;
+    const SOL_SOCKET: libc::c_int = 0xffff;
+    const SO_RCVBUF: libc::c_int = 0x1002;
+    const SO_SNDBUF: libc::c_int = 0x1001;
     let fd = sock.as_raw_socket() as libc::SOCKET;
     let size = SOCKET_BUF_SIZE as libc::c_int;
     unsafe {
         libc::setsockopt(
             fd,
-            libc::SOL_SOCKET,
-            libc::SO_RCVBUF,
+            SOL_SOCKET,
+            SO_RCVBUF,
             &size as *const _ as *const libc::c_char,
             std::mem::size_of::<libc::c_int>() as libc::c_int,
         );
         libc::setsockopt(
             fd,
-            libc::SOL_SOCKET,
-            libc::SO_SNDBUF,
+            SOL_SOCKET,
+            SO_SNDBUF,
             &size as *const _ as *const libc::c_char,
             std::mem::size_of::<libc::c_int>() as libc::c_int,
         );
