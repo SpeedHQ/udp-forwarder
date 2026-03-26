@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+
+  release:
+    needs: build
+    runs-on: blacksmith-2vcpu-ubuntu-2204
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag
+        run: |
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: udp-forwarder-v*
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: UDP Forwarder v${{ steps.version.outputs.version }}
+          files: artifacts/**/*
+          generate_release_notes: true
+          draft: true
