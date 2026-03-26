@@ -11,6 +11,9 @@ use std::time::Instant;
 use tray_icon::{TrayIconBuilder, menu::{Menu, MenuItem, MenuEvent, PredefinedMenuItem}};
 use tray_icon::TrayIconEvent;
 
+const GITHUB_REPO: &str = "SpeedHQ/udp-forwarder";
+const RELEASES_URL: &str = "https://github.com/SpeedHQ/udp-forwarder/releases/latest";
+
 slint::include_modules!();
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -397,6 +400,26 @@ fn check_pending_changes(state: &AppState, saved: &SavedState) {
     state.set_has_pending_changes(!saved.matches_ui(state));
 }
 
+/// Check GitHub for a newer release. Returns Some(tag) if a newer version exists.
+fn check_for_update() -> Option<String> {
+    let url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
+    let body_str = ureq::get(&url)
+        .header("User-Agent", &format!("udp-forwarder/{}", VERSION))
+        .call()
+        .ok()?
+        .body_mut()
+        .read_to_string()
+        .ok()?;
+    let body: serde_json::Value = serde_json::from_str(&body_str).ok()?;
+    let tag = body["tag_name"].as_str()?;
+    let remote = tag.trim_start_matches('v');
+    if remote != VERSION {
+        Some(tag.to_string())
+    } else {
+        None
+    }
+}
+
 fn main() {
     if env::args().any(|a| a == "--version" || a == "-v") {
         println!("udp-forwarder {}", VERSION);
@@ -431,6 +454,24 @@ fn main() {
     main_window.global::<AppState>().on_open_github(|| {
         let _ = open::that("https://github.com/SpeedHQ/udp-forwarder");
     });
+    main_window.global::<AppState>().on_open_release(|| {
+        let _ = open::that(RELEASES_URL);
+    });
+
+    // Check for updates in background
+    {
+        let w = main_window.as_weak();
+        thread::spawn(move || {
+            if let Some(tag) = check_for_update() {
+                let _ = w.upgrade_in_event_loop(move |main_window| {
+                    let state = main_window.global::<AppState>();
+                    state.set_update_available(true);
+                    state.set_latest_version(SharedString::from(&tag));
+                });
+            }
+        });
+    }
+
     let config_file = config_path();
 
     // Load existing config into UI
@@ -800,10 +841,11 @@ fn main() {
         .expect("Failed to create tray icon");
 
     let status_item = MenuItem::new("Stopped", false, None);
+    let update_item = MenuItem::new("Update Available", false, None);
     let quit_item = MenuItem::new("Quit", true, None);
 
     let tray_menu = Menu::new();
-    tray_menu.append_items(&[&status_item, &PredefinedMenuItem::separator(), &quit_item]).unwrap();
+    tray_menu.append_items(&[&status_item, &update_item, &PredefinedMenuItem::separator(), &quit_item]).unwrap();
 
     let _tray = TrayIconBuilder::new()
         .with_menu(Box::new(tray_menu))
@@ -814,17 +856,21 @@ fn main() {
         .expect("Failed to create tray icon");
 
     let quit_item_id = quit_item.id().clone();
+    let update_item_id = update_item.id().clone();
 
     // Poll tray events via Slint timer
     {
         let w = main_window.as_weak();
         let quit_id = quit_item_id.clone();
+        let update_id = update_item_id.clone();
         let timer = slint::Timer::default();
         timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(100), move || {
-            // Handle menu events (Quit)
+            // Handle menu events (Quit, Update)
             while let Ok(event) = MenuEvent::receiver().try_recv() {
                 if event.id == quit_id {
                     slint::quit_event_loop().ok();
+                } else if event.id == update_id {
+                    let _ = open::that(RELEASES_URL);
                 }
             }
             // Handle tray icon click (show window)
@@ -855,7 +901,7 @@ fn main() {
         });
     }
 
-    // Timer to update tray status text from UI state
+    // Timer to update tray status text and update item from UI state
     {
         let w = main_window.as_weak();
         let timer = slint::Timer::default();
@@ -868,6 +914,12 @@ fn main() {
                     "Stopped".to_string()
                 };
                 status_item.set_text(&text);
+
+                if state.get_update_available() {
+                    let ver = state.get_latest_version();
+                    update_item.set_text(&format!("Update {} available", ver));
+                    update_item.set_enabled(true);
+                }
             }
         });
         std::mem::forget(timer);

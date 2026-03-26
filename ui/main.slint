@@ -103,7 +103,7 @@ struct ForwardTarget {
 }
 
 export global AppState {
-    in-out property <string> listen-port: "5300";
+    in-out property <string> listen-port: "9301";
     in-out property <[ForwardTarget]> targets: [
         { address: "127.0.0.1:5301" },
     ];
@@ -117,6 +117,8 @@ export global AppState {
     in-out property <bool> has-pending-changes: false;
     in-out property <bool> has-errors: false;
     in-out property <string> error-text: "";
+    in-out property <bool> update-available: false;
+    in-out property <string> latest-version: "";
 
     callback start();
     callback stop();
@@ -130,6 +132,7 @@ export global AppState {
     callback update-target-address(int, string);
     callback update-target-note(int, string);
     callback open-github();
+    callback open-release();
 }
 
 component TargetRow inherits VerticalLayout {
@@ -231,6 +234,25 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                 }
             }
+            if AppState.update-available : Rectangle {
+                height: 22px;
+                border-radius: 4px;
+                background: update-ta.has-hover ? #16a34a : #22c55e;
+                animate background { duration: 120ms; }
+                width: update-label.preferred-width + 16px;
+
+                update-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { AppState.open-release(); }
+                }
+                update-label := Text {
+                    text: AppState.latest-version + " available";
+                    color: #ffffff;
+                    font-size: 11px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
             Rectangle { horizontal-stretch: 1; }
             AppCheckBox {
                 text: "Minimize to tray";
@@ -253,7 +275,7 @@ export component MainWindow inherits Window {
             LineEdit {
                 text: AppState.listen-port;
                 input-type: number;
-                placeholder-text: "5300";
+                placeholder-text: "9301";
                 width: 60px;
                 edited(value) => {
                     AppState.update-listen-port(value);

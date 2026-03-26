@@ -1,5 +1,5 @@
 [general]
-listen_port = 5300
+listen_port = 9301
 minimize_to_tray = true
 
 [forward.1]
