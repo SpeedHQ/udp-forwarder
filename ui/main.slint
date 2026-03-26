@@ -109,7 +109,7 @@ struct ForwardTarget {
 export global AppState {
     in-out property <string> listen-port: "9301";
     in-out property <[ForwardTarget]> targets: [
-        { address: "127.0.0.1:5301" },
+        { address: "127.0.0.1:5301", note: "RaceIQ" },
     ];
     in-out property <bool> running: false;
     in-out property <string> status-text: "Stopped";
