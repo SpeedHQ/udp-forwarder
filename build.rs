@@ -27,7 +27,13 @@ fn dist_to_segment(px: f64, py: f64, ax: f64, ay: f64, bx: f64, by: f64) -> f64 
 /// Draw a clean arrow using distance fields for anti-aliased edges.
 /// Arrow shape: diagonal shaft from bottom-left to top-right,
 /// with an arrowhead (horizontal + vertical bar forming an L at the tip).
-fn draw_arrow_sdf(img: &mut image::RgbaImage, size: u32, padding: f64, thickness: f64, color: [u8; 3]) {
+fn draw_arrow_sdf(
+    img: &mut image::RgbaImage,
+    size: u32,
+    padding: f64,
+    thickness: f64,
+    color: [u8; 3],
+) {
     let s = size as f64;
     let inner = s - 2.0 * padding;
 
@@ -74,9 +80,12 @@ fn draw_arrow_sdf(img: &mut image::RgbaImage, size: u32, padding: f64, thickness
                 let na = alpha;
                 let out_a = na + ea * (1.0 - na);
                 if out_a > 0.0 {
-                    let r = ((color[0] as f64 * na + existing[0] as f64 * ea * (1.0 - na)) / out_a) as u8;
-                    let g = ((color[1] as f64 * na + existing[1] as f64 * ea * (1.0 - na)) / out_a) as u8;
-                    let b = ((color[2] as f64 * na + existing[2] as f64 * ea * (1.0 - na)) / out_a) as u8;
+                    let r = ((color[0] as f64 * na + existing[0] as f64 * ea * (1.0 - na)) / out_a)
+                        as u8;
+                    let g = ((color[1] as f64 * na + existing[1] as f64 * ea * (1.0 - na)) / out_a)
+                        as u8;
+                    let b = ((color[2] as f64 * na + existing[2] as f64 * ea * (1.0 - na)) / out_a)
+                        as u8;
                     let _ = a;
                     img.put_pixel(x, y, image::Rgba([r, g, b, (out_a * 255.0) as u8]));
                 }
@@ -145,5 +154,6 @@ fn generate_app_icon() {
     // Also save to OUT_DIR for macOS dock icon
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let out_icon_path = Path::new(&out_dir).join("app_icon.png");
-    img.save(&out_icon_path).expect("Failed to save app icon to OUT_DIR");
+    img.save(&out_icon_path)
+        .expect("Failed to save app icon to OUT_DIR");
 }

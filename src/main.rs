@@ -8,8 +8,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
-use tray_icon::{TrayIconBuilder, menu::{Menu, MenuItem, MenuEvent, PredefinedMenuItem}};
 use tray_icon::TrayIconEvent;
+use tray_icon::{
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    TrayIconBuilder,
+};
 
 const GITHUB_REPO: &str = "SpeedHQ/udp-forwarder";
 const RELEASES_URL: &str = "https://github.com/SpeedHQ/udp-forwarder/releases/latest";
@@ -67,12 +70,16 @@ fn tune_socket(sock: &UdpSocket) {
     let size = SOCKET_BUF_SIZE as libc::c_int;
     unsafe {
         libc::setsockopt(
-            fd, libc::SOL_SOCKET, libc::SO_RCVBUF,
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVBUF,
             &size as *const _ as *const libc::c_void,
             std::mem::size_of::<libc::c_int>() as libc::socklen_t,
         );
         libc::setsockopt(
-            fd, libc::SOL_SOCKET, libc::SO_SNDBUF,
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
             &size as *const _ as *const libc::c_void,
             std::mem::size_of::<libc::c_int>() as libc::socklen_t,
         );
@@ -80,9 +87,7 @@ fn tune_socket(sock: &UdpSocket) {
 }
 
 fn config_path() -> PathBuf {
-    let arg_path = env::args()
-        .skip(1)
-        .find(|a| !a.starts_with('-'));
+    let arg_path = env::args().skip(1).find(|a| !a.starts_with('-'));
 
     if let Some(path) = arg_path {
         return PathBuf::from(path);
@@ -107,8 +112,12 @@ fn load_config(path: &PathBuf) -> Option<Config> {
     let conf = Ini::load_from_file(path).ok()?;
     let general = conf.section(Some("general"))?;
     let listen_port: u16 = general.get("listen_port")?.parse().ok()?;
-    let launch_on_startup = general.get("launch_on_startup").map_or(false, |v| v == "true");
-    let minimize_to_tray = general.get("minimize_to_tray").map_or(false, |v| v == "true");
+    let launch_on_startup = general
+        .get("launch_on_startup")
+        .map_or(false, |v| v == "true");
+    let minimize_to_tray = general
+        .get("minimize_to_tray")
+        .map_or(false, |v| v == "true");
 
     let mut targets = Vec::new();
     for (key, _) in conf.iter() {
@@ -123,10 +132,21 @@ fn load_config(path: &PathBuf) -> Option<Config> {
         targets.push((format!("{}:{}", ip, port), note));
     }
 
-    Some(Config { listen_port, targets, launch_on_startup, minimize_to_tray })
+    Some(Config {
+        listen_port,
+        targets,
+        launch_on_startup,
+        minimize_to_tray,
+    })
 }
 
-fn save_config(path: &PathBuf, listen_port: &str, targets: &[(String, String)], launch_on_startup: bool, minimize_to_tray: bool) {
+fn save_config(
+    path: &PathBuf,
+    listen_port: &str,
+    targets: &[(String, String)],
+    launch_on_startup: bool,
+    minimize_to_tray: bool,
+) {
     let mut conf = Ini::new();
     conf.with_section(Some("general"))
         .set("listen_port", listen_port)
@@ -165,7 +185,11 @@ fn set_launch_on_startup(enabled: bool) {
         launcher.disable()
     };
     if let Err(e) = result {
-        eprintln!("Failed to {} auto-launch: {}", if enabled { "enable" } else { "disable" }, e);
+        eprintln!(
+            "Failed to {} auto-launch: {}",
+            if enabled { "enable" } else { "disable" },
+            e
+        );
     }
 }
 
@@ -221,7 +245,8 @@ fn run_headless(config_path: PathBuf) {
         .map(|(address, _note)| {
             use std::net::ToSocketAddrs;
             address.parse().unwrap_or_else(|_| {
-                address.to_socket_addrs()
+                address
+                    .to_socket_addrs()
                     .ok()
                     .and_then(|mut addrs| addrs.next())
                     .unwrap_or_else(|| {
@@ -325,7 +350,10 @@ fn refresh_target_errors(state: &AppState) {
             let addr = target.address.as_str();
             let validation = validate_target_address(addr);
             let is_dup = !addr.is_empty()
-                && addresses.iter().enumerate().any(|(j, a)| j != i && a == addr);
+                && addresses
+                    .iter()
+                    .enumerate()
+                    .any(|(j, a)| j != i && a == addr);
 
             target.validation_error = SharedString::from(validation);
             target.is_duplicate = is_dup;
@@ -343,12 +371,20 @@ fn refresh_target_errors(state: &AppState) {
             .filter(|&i| model.row_data(i).map_or(false, |t| t.is_duplicate))
             .count();
         let val_count = (0..count)
-            .filter(|&i| model.row_data(i).map_or(false, |t| !t.validation_error.is_empty()))
+            .filter(|&i| {
+                model
+                    .row_data(i)
+                    .map_or(false, |t| !t.validation_error.is_empty())
+            })
             .count();
         let msg = match (dup_count > 0, val_count > 0) {
             (true, true) => "Duplicate and invalid targets found".to_string(),
             (true, false) => "Duplicate targets found".to_string(),
-            (false, true) => format!("{} invalid target{}", val_count, if val_count > 1 { "s" } else { "" }),
+            (false, true) => format!(
+                "{} invalid target{}",
+                val_count,
+                if val_count > 1 { "s" } else { "" }
+            ),
             _ => String::new(),
         };
         state.set_error_text(SharedString::from(msg));
@@ -402,7 +438,10 @@ fn check_pending_changes(state: &AppState, saved: &SavedState) {
 
 /// Check GitHub for a newer release. Returns (tag, true) if update available, (tag, false) if up to date.
 fn check_for_update() -> Option<(String, bool)> {
-    let url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
+    let url = format!(
+        "https://api.github.com/repos/{}/releases/latest",
+        GITHUB_REPO
+    );
     let body_str = ureq::get(&url)
         .header("User-Agent", &format!("udp-forwarder/{}", VERSION))
         .call()
@@ -423,9 +462,7 @@ fn main() {
     }
 
     // Headless mode: explicit flag or config path argument
-    if env::args().any(|a| a == "--headless")
-        || env::args().skip(1).any(|a| !a.starts_with('-'))
-    {
+    if env::args().any(|a| a == "--headless") || env::args().skip(1).any(|a| !a.starts_with('-')) {
         run_headless(config_path());
         return;
     }
@@ -436,17 +473,22 @@ fn main() {
     // Set macOS dock icon (winit doesn't support this, must use NSApplication directly)
     #[cfg(target_os = "macos")]
     {
-        use objc2::MainThreadMarker;
         use objc2::AllocAnyThread;
+        use objc2::MainThreadMarker;
         let icon_data = include_bytes!(concat!(env!("OUT_DIR"), "/app_icon.png"));
         let data = objc2_foundation::NSData::with_bytes(icon_data);
-        if let Some(ns_image) = objc2_app_kit::NSImage::initWithData(objc2_app_kit::NSImage::alloc(), &data) {
-            let app = objc2_app_kit::NSApplication::sharedApplication(MainThreadMarker::new().unwrap());
+        if let Some(ns_image) =
+            objc2_app_kit::NSImage::initWithData(objc2_app_kit::NSImage::alloc(), &data)
+        {
+            let app =
+                objc2_app_kit::NSApplication::sharedApplication(MainThreadMarker::new().unwrap());
             unsafe { app.setApplicationIconImage(Some(&ns_image)) };
         }
     }
 
-    main_window.global::<AppState>().set_version(SharedString::from(VERSION));
+    main_window
+        .global::<AppState>()
+        .set_version(SharedString::from(VERSION));
     main_window.global::<AppState>().on_open_github(|| {
         let _ = open::that("https://github.com/SpeedHQ/udp-forwarder");
     });
@@ -492,7 +534,9 @@ fn main() {
         state.set_minimize_to_tray(config.minimize_to_tray);
     }
 
-    let saved_state = Arc::new(Mutex::new(SavedState::from_ui(&main_window.global::<AppState>())));
+    let saved_state = Arc::new(Mutex::new(SavedState::from_ui(
+        &main_window.global::<AppState>(),
+    )));
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let packet_count = Arc::new(AtomicU64::new(0));
@@ -502,12 +546,14 @@ fn main() {
     {
         let w = main_window.as_weak();
         let saved = saved_state.clone();
-        main_window.global::<AppState>().on_update_listen_port(move |value| {
-            let w = w.upgrade().unwrap();
-            let state = w.global::<AppState>();
-            state.set_listen_port(value);
-            check_pending_changes(&state, &saved.lock().unwrap());
-        });
+        main_window
+            .global::<AppState>()
+            .on_update_listen_port(move |value| {
+                let w = w.upgrade().unwrap();
+                let state = w.global::<AppState>();
+                state.set_listen_port(value);
+                check_pending_changes(&state, &saved.lock().unwrap());
+            });
     }
 
     // Add target
@@ -537,53 +583,59 @@ fn main() {
     {
         let w = main_window.as_weak();
         let saved = saved_state.clone();
-        main_window.global::<AppState>().on_remove_target(move |index| {
-            let w = w.upgrade().unwrap();
-            let state = w.global::<AppState>();
-            let model = state.get_targets();
-            let mut targets: Vec<ForwardTarget> = (0..model.row_count())
-                .map(|i| model.row_data(i).unwrap())
-                .collect();
-            if (index as usize) < targets.len() {
-                targets.remove(index as usize);
-            }
-            state.set_targets(ModelRc::new(VecModel::from(targets)));
-            refresh_target_errors(&state);
-            check_pending_changes(&state, &saved.lock().unwrap());
-        });
+        main_window
+            .global::<AppState>()
+            .on_remove_target(move |index| {
+                let w = w.upgrade().unwrap();
+                let state = w.global::<AppState>();
+                let model = state.get_targets();
+                let mut targets: Vec<ForwardTarget> = (0..model.row_count())
+                    .map(|i| model.row_data(i).unwrap())
+                    .collect();
+                if (index as usize) < targets.len() {
+                    targets.remove(index as usize);
+                }
+                state.set_targets(ModelRc::new(VecModel::from(targets)));
+                refresh_target_errors(&state);
+                check_pending_changes(&state, &saved.lock().unwrap());
+            });
     }
 
     // Update target address with validation (in-place to preserve focus)
     {
         let w = main_window.as_weak();
         let saved = saved_state.clone();
-        main_window.global::<AppState>().on_update_target_address(move |index, value| {
-            let w = w.upgrade().unwrap();
-            let state = w.global::<AppState>();
-            let model = state.get_targets();
-            if let Some(mut target) = model.row_data(index as usize) {
-                target.address = value;
-                model.set_row_data(index as usize, target);
-            }
-            refresh_target_errors(&state);
-            check_pending_changes(&state, &saved.lock().unwrap());
-        });
+        main_window
+            .global::<AppState>()
+            .on_update_target_address(move |index, value| {
+                let w = w.upgrade().unwrap();
+                let state = w.global::<AppState>();
+                let model = state.get_targets();
+                if let Some(mut target) = model.row_data(index as usize) {
+                    target.address = value;
+                    model.set_row_data(index as usize, target);
+                }
+                refresh_target_errors(&state);
+                check_pending_changes(&state, &saved.lock().unwrap());
+            });
     }
 
     // Update target note (in-place to preserve focus)
     {
         let w = main_window.as_weak();
         let saved = saved_state.clone();
-        main_window.global::<AppState>().on_update_target_note(move |index, value| {
-            let w = w.upgrade().unwrap();
-            let state = w.global::<AppState>();
-            let model = state.get_targets();
-            if let Some(mut target) = model.row_data(index as usize) {
-                target.note = value;
-                model.set_row_data(index as usize, target);
-            }
-            check_pending_changes(&state, &saved.lock().unwrap());
-        });
+        main_window
+            .global::<AppState>()
+            .on_update_target_note(move |index, value| {
+                let w = w.upgrade().unwrap();
+                let state = w.global::<AppState>();
+                let model = state.get_targets();
+                if let Some(mut target) = model.row_data(index as usize) {
+                    target.note = value;
+                    model.set_row_data(index as usize, target);
+                }
+                check_pending_changes(&state, &saved.lock().unwrap());
+            });
     }
 
     // Cancel changes — reload config from disk
@@ -617,40 +669,56 @@ fn main() {
     {
         let w = main_window.as_weak();
         let path = config_file.clone();
-        main_window.global::<AppState>().on_toggle_launch_on_startup(move |enabled| {
-            set_launch_on_startup(enabled);
-            // Persist to config
-            let w = w.upgrade().unwrap();
-            let state = w.global::<AppState>();
-            let listen_port = state.get_listen_port().to_string();
-            let model = state.get_targets();
-            let targets: Vec<(String, String)> = (0..model.row_count())
-                .map(|i| {
-                    let t = model.row_data(i).unwrap();
-                    (t.address.to_string(), t.note.to_string())
-                })
-                .collect();
-            save_config(&path, &listen_port, &targets, enabled, state.get_minimize_to_tray());
-        });
+        main_window
+            .global::<AppState>()
+            .on_toggle_launch_on_startup(move |enabled| {
+                set_launch_on_startup(enabled);
+                // Persist to config
+                let w = w.upgrade().unwrap();
+                let state = w.global::<AppState>();
+                let listen_port = state.get_listen_port().to_string();
+                let model = state.get_targets();
+                let targets: Vec<(String, String)> = (0..model.row_count())
+                    .map(|i| {
+                        let t = model.row_data(i).unwrap();
+                        (t.address.to_string(), t.note.to_string())
+                    })
+                    .collect();
+                save_config(
+                    &path,
+                    &listen_port,
+                    &targets,
+                    enabled,
+                    state.get_minimize_to_tray(),
+                );
+            });
     }
 
     // Toggle minimize to tray
     {
         let w = main_window.as_weak();
         let path = config_file.clone();
-        main_window.global::<AppState>().on_toggle_minimize_to_tray(move |enabled| {
-            let w = w.upgrade().unwrap();
-            let state = w.global::<AppState>();
-            let listen_port = state.get_listen_port().to_string();
-            let model = state.get_targets();
-            let targets: Vec<(String, String)> = (0..model.row_count())
-                .map(|i| {
-                    let t = model.row_data(i).unwrap();
-                    (t.address.to_string(), t.note.to_string())
-                })
-                .collect();
-            save_config(&path, &listen_port, &targets, state.get_launch_on_startup(), enabled);
-        });
+        main_window
+            .global::<AppState>()
+            .on_toggle_minimize_to_tray(move |enabled| {
+                let w = w.upgrade().unwrap();
+                let state = w.global::<AppState>();
+                let listen_port = state.get_listen_port().to_string();
+                let model = state.get_targets();
+                let targets: Vec<(String, String)> = (0..model.row_count())
+                    .map(|i| {
+                        let t = model.row_data(i).unwrap();
+                        (t.address.to_string(), t.note.to_string())
+                    })
+                    .collect();
+                save_config(
+                    &path,
+                    &listen_port,
+                    &targets,
+                    state.get_launch_on_startup(),
+                    enabled,
+                );
+            });
     }
 
     // Save config
@@ -672,7 +740,13 @@ fn main() {
                 })
                 .collect();
             let launch_on_startup = state.get_launch_on_startup();
-            save_config(&path, &listen_port, &targets, launch_on_startup, state.get_minimize_to_tray());
+            save_config(
+                &path,
+                &listen_port,
+                &targets,
+                launch_on_startup,
+                state.get_minimize_to_tray(),
+            );
             *saved.lock().unwrap() = SavedState::from_ui(&state);
             state.set_has_pending_changes(false);
             state.set_status_text(SharedString::from("Config saved, restarting..."));
@@ -726,12 +800,18 @@ fn main() {
                                 if let Some(addr) = addrs.next() {
                                     targets.push(addr);
                                 } else {
-                                    state.set_status_text(SharedString::from(format!("Could not resolve: {}", addr_str)));
+                                    state.set_status_text(SharedString::from(format!(
+                                        "Could not resolve: {}",
+                                        addr_str
+                                    )));
                                     return;
                                 }
                             }
                             Err(_) => {
-                                state.set_status_text(SharedString::from(format!("Invalid target: {}", addr_str)));
+                                state.set_status_text(SharedString::from(format!(
+                                    "Invalid target: {}",
+                                    addr_str
+                                )));
                                 return;
                             }
                         }
@@ -753,7 +833,9 @@ fn main() {
                 }
             };
 
-            socket.set_read_timeout(Some(std::time::Duration::from_millis(500))).ok();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+                .ok();
             tune_socket(&socket);
 
             // Broadcast ring — zero allocation on hot path, same as headless
@@ -767,7 +849,10 @@ fn main() {
             packet_count.store(0, Ordering::Relaxed);
             state.set_running(true);
             state.set_packets_forwarded(0);
-            state.set_status_text(SharedString::from(format!("Listening on port {}", listen_port)));
+            state.set_status_text(SharedString::from(format!(
+                "Listening on port {}",
+                listen_port
+            )));
 
             let stop = stop_flag.clone();
             let count = packet_count.clone();
@@ -786,8 +871,12 @@ fn main() {
 
                     let (len, _src) = match socket.recv_from(&mut buf) {
                         Ok(result) => result,
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
-                            || e.kind() == std::io::ErrorKind::TimedOut => continue,
+                        Err(ref e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut =>
+                        {
+                            continue
+                        }
                         Err(_) => continue,
                     };
 
@@ -805,7 +894,8 @@ fn main() {
                             state.set_packets_forwarded(n as i32);
                             state.set_packets_per_second(pps);
                             state.set_status_text(SharedString::from(format!(
-                                "Running — {} packets forwarded", n
+                                "Running — {} packets forwarded",
+                                n
                             )));
                         });
                     }
@@ -839,7 +929,9 @@ fn main() {
 
     // --- System tray ---
     let icon_bytes = include_bytes!(concat!(env!("OUT_DIR"), "/tray_icon.png"));
-    let icon_img = image::load_from_memory(icon_bytes).expect("Failed to load tray icon").into_rgba8();
+    let icon_img = image::load_from_memory(icon_bytes)
+        .expect("Failed to load tray icon")
+        .into_rgba8();
     let (w_icon, h_icon) = icon_img.dimensions();
     let tray_icon_data = tray_icon::Icon::from_rgba(icon_img.into_raw(), w_icon, h_icon)
         .expect("Failed to create tray icon");
@@ -849,7 +941,14 @@ fn main() {
     let quit_item = MenuItem::new("Quit", true, None);
 
     let tray_menu = Menu::new();
-    tray_menu.append_items(&[&status_item, &update_item, &PredefinedMenuItem::separator(), &quit_item]).unwrap();
+    tray_menu
+        .append_items(&[
+            &status_item,
+            &update_item,
+            &PredefinedMenuItem::separator(),
+            &quit_item,
+        ])
+        .unwrap();
 
     let _tray = TrayIconBuilder::new()
         .with_menu(Box::new(tray_menu))
@@ -868,24 +967,28 @@ fn main() {
         let quit_id = quit_item_id.clone();
         let update_id = update_item_id.clone();
         let timer = slint::Timer::default();
-        timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(100), move || {
-            // Handle menu events (Quit, Update)
-            while let Ok(event) = MenuEvent::receiver().try_recv() {
-                if event.id == quit_id {
-                    slint::quit_event_loop().ok();
-                } else if event.id == update_id {
-                    let _ = open::that(RELEASES_URL);
-                }
-            }
-            // Handle tray icon click (show window)
-            while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-                if matches!(event, TrayIconEvent::Click { .. }) {
-                    if let Some(w) = w.upgrade() {
-                        w.window().show().ok();
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(100),
+            move || {
+                // Handle menu events (Quit, Update)
+                while let Ok(event) = MenuEvent::receiver().try_recv() {
+                    if event.id == quit_id {
+                        slint::quit_event_loop().ok();
+                    } else if event.id == update_id {
+                        let _ = open::that(RELEASES_URL);
                     }
                 }
-            }
-        });
+                // Handle tray icon click (show window)
+                while let Ok(event) = TrayIconEvent::receiver().try_recv() {
+                    if matches!(event, TrayIconEvent::Click { .. }) {
+                        if let Some(w) = w.upgrade() {
+                            w.window().show().ok();
+                        }
+                    }
+                }
+            },
+        );
         // Leak the timer so it lives for the duration of the app
         std::mem::forget(timer);
     }
@@ -909,27 +1012,31 @@ fn main() {
     {
         let w = main_window.as_weak();
         let timer = slint::Timer::default();
-        timer.start(slint::TimerMode::Repeated, std::time::Duration::from_secs(1), move || {
-            if let Some(w) = w.upgrade() {
-                let state = w.global::<AppState>();
-                let text = if state.get_running() {
-                    format!("Running — {} pkt/s", state.get_packets_per_second())
-                } else {
-                    "Stopped".to_string()
-                };
-                status_item.set_text(&text);
-
-                if state.get_update_checked() {
-                    if state.get_update_available() {
-                        let ver = state.get_latest_version();
-                        update_item.set_text(&format!("Update {} available", ver));
-                        update_item.set_enabled(true);
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_secs(1),
+            move || {
+                if let Some(w) = w.upgrade() {
+                    let state = w.global::<AppState>();
+                    let text = if state.get_running() {
+                        format!("Running — {} pkt/s", state.get_packets_per_second())
                     } else {
-                        update_item.set_text("No updates available");
+                        "Stopped".to_string()
+                    };
+                    status_item.set_text(&text);
+
+                    if state.get_update_checked() {
+                        if state.get_update_available() {
+                            let ver = state.get_latest_version();
+                            update_item.set_text(&format!("Update {} available", ver));
+                            update_item.set_enabled(true);
+                        } else {
+                            update_item.set_text("No updates available");
+                        }
                     }
                 }
-            }
-        });
+            },
+        );
         std::mem::forget(timer);
     }
 
