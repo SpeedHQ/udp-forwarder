@@ -1,4 +1,4 @@
-import { LineEdit, VerticalBox, HorizontalBox, ScrollView, CheckBox } from "std-widgets.slint";
+import { LineEdit, VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
 
 component BlueButton inherits Rectangle {
     in property <string> text;
@@ -49,6 +49,49 @@ component RedButton inherits Rectangle {
                 font-size: 12px;
             }
         }
+    }
+}
+
+component AppCheckBox inherits Rectangle {
+    in property <string> text;
+    in-out property <bool> checked;
+    callback toggled;
+    height: 20px;
+    width: box.width + 6px + label.width;
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            checked = !checked;
+            root.toggled();
+        }
+    }
+
+    box := Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: 16px;
+        height: 16px;
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: checked ? #3b82f6 : #52525b;
+        background: checked ? #3b82f6 : transparent;
+
+        if checked : Text {
+            text: "✓";
+            color: #ffffff;
+            font-size: 11px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+    }
+
+    label := Text {
+        x: box.width + 6px;
+        y: (parent.height - self.height) / 2;
+        text: root.text;
+        color: #a1a1aa;
+        font-size: 12px;
     }
 }
 
@@ -189,14 +232,14 @@ export component MainWindow inherits Window {
                 }
             }
             Rectangle { horizontal-stretch: 1; }
-            CheckBox {
+            AppCheckBox {
                 text: "Minimize to tray";
-                checked: AppState.minimize-to-tray;
+                checked <=> AppState.minimize-to-tray;
                 toggled => { AppState.toggle-minimize-to-tray(self.checked); }
             }
-            CheckBox {
+            AppCheckBox {
                 text: "Launch on startup";
-                checked: AppState.launch-on-startup;
+                checked <=> AppState.launch-on-startup;
                 toggled => { AppState.toggle-launch-on-startup(self.checked); }
             }
         }
