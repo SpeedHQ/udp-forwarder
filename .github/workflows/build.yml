@@ -9,6 +9,10 @@ on:
         description: "Git ref to checkout"
         type: string
         required: false
+      version:
+        description: "Override version in Cargo.toml before building"
+        type: string
+        required: false
 
 jobs:
   build:
@@ -31,6 +35,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || '' }}
+
+      - name: Override version
+        if: inputs.version
+        shell: bash
+        run: |
+          CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          sed -i"" -e "s/^version = \"$CURRENT\"/version = \"${{ inputs.version }}\"/" Cargo.toml
 
       - name: Get version
         id: version

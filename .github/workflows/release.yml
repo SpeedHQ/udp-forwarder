@@ -11,16 +11,19 @@ on:
           - patch
           - minor
           - major
+  release:
+    types: [published]
 
 permissions:
   contents: write
 
 jobs:
-  bump:
+  # --- Triggered by manual dispatch: compute version, build, create draft ---
+  compute-version:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: blacksmith-2vcpu-ubuntu-2204
     outputs:
       version: ${{ steps.bump.outputs.version }}
-      sha: ${{ steps.push.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -38,41 +41,22 @@ jobs:
           esac
 
           NEW="${MAJOR}.${MINOR}.${PATCH}"
-          sed -i "s/^version = \"$CURRENT\"/version = \"$NEW\"/" Cargo.toml
           echo "version=$NEW" >> "$GITHUB_OUTPUT"
           echo "::notice::Version bump: $CURRENT → $NEW (${{ inputs.bump }})"
 
-      - name: Commit and push version bump
-        id: push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml
-          git commit -m "chore: bump version to ${{ steps.bump.outputs.version }}"
-          git push
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
   build:
-    needs: bump
+    if: github.event_name == 'workflow_dispatch'
+    needs: compute-version
     uses: ./.github/workflows/build.yml
     with:
-      ref: ${{ needs.bump.outputs.sha }}
+      version: ${{ needs.compute-version.outputs.version }}
     secrets: inherit
 
-  release:
-    needs: [bump, build]
+  draft-release:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [compute-version, build]
     runs-on: blacksmith-2vcpu-ubuntu-2204
-
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Create tag
-        run: |
-          git tag "v${{ needs.bump.outputs.version }}"
-          git push origin "v${{ needs.bump.outputs.version }}"
-
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -81,8 +65,33 @@ jobs:
       - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.bump.outputs.version }}
-          name: UDP Forwarder v${{ needs.bump.outputs.version }}
+          tag_name: v${{ needs.compute-version.outputs.version }}
+          name: UDP Forwarder v${{ needs.compute-version.outputs.version }}
           files: artifacts/**/*
           generate_release_notes: true
           draft: true
+
+  # --- Triggered when draft is published: commit version bump + tag ---
+  finalize:
+    if: github.event_name == 'release'
+    runs-on: blacksmith-2vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update version in Cargo.toml
+        shell: bash
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          sed -i "s/^version = \"$CURRENT\"/version = \"$VERSION\"/" Cargo.toml
+
+      - name: Commit version bump
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml
+          git commit -m "chore: bump version to $VERSION"
+          git push
