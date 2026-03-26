@@ -43,6 +43,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.target }}-cargo-
+
       - name: Install Linux dependencies
         if: contains(matrix.target, 'linux')
         run: sudo apt-get update && sudo apt-get install -y libayatana-appindicator3-dev
