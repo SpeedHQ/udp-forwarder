@@ -400,8 +400,8 @@ fn check_pending_changes(state: &AppState, saved: &SavedState) {
     state.set_has_pending_changes(!saved.matches_ui(state));
 }
 
-/// Check GitHub for a newer release. Returns Some(tag) if a newer version exists.
-fn check_for_update() -> Option<String> {
+/// Check GitHub for a newer release. Returns (tag, true) if update available, (tag, false) if up to date.
+fn check_for_update() -> Option<(String, bool)> {
     let url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
     let body_str = ureq::get(&url)
         .header("User-Agent", &format!("udp-forwarder/{}", VERSION))
@@ -413,11 +413,7 @@ fn check_for_update() -> Option<String> {
     let body: serde_json::Value = serde_json::from_str(&body_str).ok()?;
     let tag = body["tag_name"].as_str()?;
     let remote = tag.trim_start_matches('v');
-    if remote != VERSION {
-        Some(tag.to_string())
-    } else {
-        None
-    }
+    Some((remote.to_string(), remote != VERSION))
 }
 
 fn main() {
@@ -450,7 +446,7 @@ fn main() {
         }
     }
 
-    main_window.global::<AppState>().set_version(SharedString::from(format!("v{}", VERSION)));
+    main_window.global::<AppState>().set_version(SharedString::from(VERSION));
     main_window.global::<AppState>().on_open_github(|| {
         let _ = open::that("https://github.com/SpeedHQ/udp-forwarder");
     });
@@ -462,13 +458,15 @@ fn main() {
     {
         let w = main_window.as_weak();
         thread::spawn(move || {
-            if let Some(tag) = check_for_update() {
-                let _ = w.upgrade_in_event_loop(move |main_window| {
-                    let state = main_window.global::<AppState>();
-                    state.set_update_available(true);
+            let result = check_for_update();
+            let _ = w.upgrade_in_event_loop(move |main_window| {
+                let state = main_window.global::<AppState>();
+                if let Some((tag, is_new)) = result {
+                    state.set_update_available(is_new);
                     state.set_latest_version(SharedString::from(&tag));
-                });
-            }
+                }
+                state.set_update_checked(true);
+            });
         });
     }
 
@@ -684,7 +682,13 @@ fn main() {
                 let _ = h.join();
             }
             state.set_running(false);
-            state.invoke_start();
+            // Defer restart so this callback completes and the port is fully released
+            let w_restart = w.as_weak();
+            slint::Timer::single_shot(std::time::Duration::from_millis(50), move || {
+                if let Some(w) = w_restart.upgrade() {
+                    w.global::<AppState>().invoke_start();
+                }
+            });
         });
     }
 
@@ -915,10 +919,14 @@ fn main() {
                 };
                 status_item.set_text(&text);
 
-                if state.get_update_available() {
-                    let ver = state.get_latest_version();
-                    update_item.set_text(&format!("Update {} available", ver));
-                    update_item.set_enabled(true);
+                if state.get_update_checked() {
+                    if state.get_update_available() {
+                        let ver = state.get_latest_version();
+                        update_item.set_text(&format!("Update {} available", ver));
+                        update_item.set_enabled(true);
+                    } else {
+                        update_item.set_text("No updates available");
+                    }
                 }
             }
         });
