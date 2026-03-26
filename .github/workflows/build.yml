@@ -159,7 +159,7 @@ jobs:
 
           # Sign .app bundle
           codesign --force --deep --options runtime \
-              --sign "Developer ID Application: ${APPLE_TEAM_ID}" \
+              --sign "${APPLE_TEAM_ID}" \
               "$APP_DIR"
           codesign --verify --verbose "$APP_DIR"
 
