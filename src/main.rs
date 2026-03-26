@@ -64,6 +64,7 @@ impl BroadcastRing {
     }
 }
 
+#[cfg(unix)]
 fn tune_socket(sock: &UdpSocket) {
     use std::os::fd::AsRawFd;
     let fd = sock.as_raw_fd();
@@ -82,6 +83,29 @@ fn tune_socket(sock: &UdpSocket) {
             libc::SO_SNDBUF,
             &size as *const _ as *const libc::c_void,
             std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        );
+    }
+}
+
+#[cfg(windows)]
+fn tune_socket(sock: &UdpSocket) {
+    use std::os::windows::io::AsRawSocket;
+    let fd = sock.as_raw_socket() as libc::SOCKET;
+    let size = SOCKET_BUF_SIZE as libc::c_int;
+    unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVBUF,
+            &size as *const _ as *const libc::c_char,
+            std::mem::size_of::<libc::c_int>() as libc::c_int,
+        );
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            &size as *const _ as *const libc::c_char,
+            std::mem::size_of::<libc::c_int>() as libc::c_int,
         );
     }
 }
