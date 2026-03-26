@@ -1,4 +1,8 @@
-# UDP Forwarder
+<p align="center">
+  <img src="assets/screenshot.png" alt="UDP Forwarder Screenshot" width="600">
+  <br>
+  <h1 align="center">UDP Forwarder</h1>
+</p>
 
 A lightweight UDP packet forwarder written in Rust. Listens on a single port and forwards all received packets to multiple destinations — useful for splitting game telemetry or any UDP stream to multiple consumers. Built as an optional companion to [RaceIQ](https://github.com/SpeedHQ/RaceIQ) so sim racers can receive telemetry on all their gear and software simultaneously with minimum latency.
 
