@@ -49,9 +49,15 @@ fn main() {
         .expect("Failed to build");
     assert!(status.success(), "Build failed");
 
+    let binary_name = if cfg!(windows) {
+        "udp-forwarder.exe"
+    } else {
+        "udp-forwarder"
+    };
     let binary = std::env::current_dir()
         .unwrap()
-        .join("target/release/udp-forwarder");
+        .join("target/release")
+        .join(binary_name);
 
     println!("UDP Forwarder Smoke Test");
     println!("========================");
