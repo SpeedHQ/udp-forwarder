@@ -106,8 +106,17 @@ struct ForwardTarget {
     is-duplicate: bool,
 }
 
+struct ListenPort {
+    key: string,
+    port: string,
+    enabled: bool,
+    label: string,
+    is-preset: bool,
+}
+
 export global AppState {
-    in-out property <string> listen-port: "9301";
+    in-out property <[ListenPort]> listen-ports: [];
+    in-out property <int> active-tab: 0;  // 0 = Listen, 1 = Destinations
     in-out property <[ForwardTarget]> targets: [
         { address: "127.0.0.1:5301", note: "RaceIQ" },
     ];
@@ -133,7 +142,11 @@ export global AppState {
     callback cancel-changes();
     callback toggle-launch-on-startup(bool);
     callback toggle-minimize-to-tray(bool);
-    callback update-listen-port(string);
+    callback toggle-listen-port(int, bool);
+    callback update-listen-port-number(int, string);
+    callback add-custom-listen-port();
+    callback remove-listen-port(int);
+    callback switch-tab(int);
     callback update-target-address(int, string);
     callback update-target-note(int, string);
     callback open-github();
@@ -198,6 +211,51 @@ component TargetRow inherits VerticalLayout {
             text: validation-error;
             color: #ef4444;
             font-size: 11px;
+        }
+    }
+}
+
+component ListenPortRow inherits HorizontalLayout {
+    in property <int> index;
+    in-out property <string> port;
+    in-out property <string> label;
+    in property <bool> enabled;
+    in property <bool> is-preset;
+    height: 36px;
+    spacing: 8px;
+    padding-right: 12px;
+
+    AppCheckBox {
+        text: "";
+        checked: enabled;
+        toggled => { AppState.toggle-listen-port(index, self.checked); }
+    }
+
+    Text {
+        text: label;
+        color: enabled ? #fafafa : #52525b;
+        font-size: 12px;
+        vertical-alignment: center;
+        min-width: 120px;
+    }
+
+    LineEdit {
+        text: port;
+        input-type: number;
+        width: 70px;
+        enabled: !is-preset;
+        edited(value) => {
+            AppState.update-listen-port-number(index, value);
+        }
+    }
+
+    Rectangle { horizontal-stretch: 1; }
+
+    if !is-preset : VerticalLayout {
+        alignment: center;
+        RedButton {
+            text: "Remove";
+            clicked => { AppState.remove-listen-port(index); }
         }
     }
 }
@@ -273,49 +331,102 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Listen port
+        // Tab bar
         HorizontalLayout {
-            height: 36px;
-            spacing: 8px;
+            height: 32px;
+            spacing: 4px;
 
-            Text { text: "Listen Port"; color: #a1a1aa; font-size: 12px; vertical-alignment: center; }
-            LineEdit {
-                text: AppState.listen-port;
-                input-type: number;
-                placeholder-text: "9301";
-                width: 60px;
-                edited(value) => {
-                    AppState.update-listen-port(value);
+            Rectangle {
+                min-width: 100px;
+                height: 32px;
+                border-radius: 6px;
+                background: AppState.active-tab == 0 ? #1e3a5f : transparent;
+
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { AppState.switch-tab(0); }
+                }
+                Text {
+                    text: "Listen (" + AppState.listen-ports.length + ")";
+                    color: AppState.active-tab == 0 ? #60a5fa : #a1a1aa;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
                 }
             }
-            Rectangle { horizontal-stretch: 1; }
-        }
 
-        // Targets
-        HorizontalLayout {
-            height: 30px;
-            spacing: 8px;
+            Rectangle {
+                min-width: 120px;
+                height: 32px;
+                border-radius: 6px;
+                background: AppState.active-tab == 1 ? #1e3a5f : transparent;
 
-            Text { text: "Destinations (" + AppState.targets.length + ")"; color: #a1a1aa; font-size: 12px; vertical-alignment: center; }
-            BlueButton {
-                text: "Add New Destination";
-                clicked => { AppState.add-target(); }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { AppState.switch-tab(1); }
+                }
+                Text {
+                    text: "Destinations (" + AppState.targets.length + ")";
+                    color: AppState.active-tab == 1 ? #60a5fa : #a1a1aa;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
+
             Rectangle { horizontal-stretch: 1; }
         }
 
+        // Tab content
         ScrollView {
             vertical-stretch: 1;
 
             VerticalLayout {
                 spacing: 8px;
 
-                for target[index] in AppState.targets : TargetRow {
-                    index: index;
-                    address: target.address;
-                    note: target.note;
-                    validation-error: target.validation-error;
-                    is-duplicate: target.is-duplicate;
+                // Listen tab
+                if AppState.active-tab == 0 : VerticalLayout {
+                    spacing: 8px;
+
+                    for lp[index] in AppState.listen-ports : ListenPortRow {
+                        index: index;
+                        port: lp.port;
+                        label: lp.label;
+                        enabled: lp.enabled;
+                        is-preset: lp.is-preset;
+                    }
+
+                    HorizontalLayout {
+                        height: 36px;
+                        BlueButton {
+                            text: "Add Custom Port";
+                            clicked => { AppState.add-custom-listen-port(); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                }
+
+                // Destinations tab
+                if AppState.active-tab == 1 : VerticalLayout {
+                    spacing: 8px;
+
+                    HorizontalLayout {
+                        height: 30px;
+                        spacing: 8px;
+                        BlueButton {
+                            text: "Add New Destination";
+                            clicked => { AppState.add-target(); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+
+                    for target[index] in AppState.targets : TargetRow {
+                        index: index;
+                        address: target.address;
+                        note: target.note;
+                        validation-error: target.validation-error;
+                        is-duplicate: target.is-duplicate;
+                    }
                 }
             }
         }
