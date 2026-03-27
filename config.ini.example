@@ -1,11 +1,23 @@
 [general]
-listen_port = 9301
-minimize_to_tray = true
+launch_on_startup = false
+minimize_to_tray = false
+
+[listen.raceiq]
+port = 9301
+enabled = true
+label = RaceIQ
+
+[listen.f1]
+port = 20888
+enabled = true
+label = F1 24
+
+[listen.forza]
+port = 4843
+enabled = false
+label = Forza Motorsport
 
 [forward.1]
 ip = 127.0.0.1
 port = 5301
-
-[forward.2]
-ip = 192.168.1.100
-port = 5300
+note = RaceIQ

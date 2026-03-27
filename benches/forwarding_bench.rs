@@ -141,7 +141,10 @@ fn write_config(
 ) {
     let mut f = std::fs::File::create(path).expect("Failed to create config");
     writeln!(f, "[general]").unwrap();
-    writeln!(f, "listen_port = {}", listen_port).unwrap();
+    writeln!(f, "\n[listen.bench]").unwrap();
+    writeln!(f, "port = {}", listen_port).unwrap();
+    writeln!(f, "enabled = true").unwrap();
+    writeln!(f, "label = Benchmark").unwrap();
     for i in 0..num_targets {
         writeln!(f, "\n[forward.{}]", i + 1).unwrap();
         writeln!(f, "ip = 127.0.0.1").unwrap();
