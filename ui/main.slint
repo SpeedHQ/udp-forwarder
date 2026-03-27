@@ -142,7 +142,6 @@ export global AppState {
     callback cancel-changes();
     callback toggle-launch-on-startup(bool);
     callback toggle-minimize-to-tray(bool);
-    callback toggle-listen-port(int, bool);
     callback update-listen-port-number(int, string);
     callback add-custom-listen-port();
     callback remove-listen-port(int);
@@ -225,15 +224,9 @@ component ListenPortRow inherits HorizontalLayout {
     spacing: 8px;
     padding-right: 12px;
 
-    AppCheckBox {
-        text: "";
-        checked: enabled;
-        toggled => { AppState.toggle-listen-port(index, self.checked); }
-    }
-
     Text {
         text: label;
-        color: enabled ? #fafafa : #52525b;
+        color: #fafafa;
         font-size: 12px;
         vertical-alignment: center;
         min-width: 120px;

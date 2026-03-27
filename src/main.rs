@@ -130,15 +130,14 @@ fn config_path() -> PathBuf {
 
 #[derive(Clone)]
 struct ListenPortConfig {
-    key: String,        // e.g. "raceiq", "f1", "forza", "custom_1"
+    key: String,        // e.g. "f1", "forza", "custom_1"
     port: u16,
     enabled: bool,
-    label: String,      // e.g. "RaceIQ", "F1 24", "Forza Motorsport"
+    label: String,      // e.g. "F1 24", "Forza Motorsport"
     is_preset: bool,    // presets can't be removed, only toggled
 }
 
 const PRESET_LISTEN_PORTS: &[(&str, u16, &str)] = &[
-    ("raceiq", 9301, "RaceIQ"),
     ("f1", 20888, "F1 24"),
     ("forza", 4843, "Forza Motorsport"),
 ];
@@ -220,7 +219,7 @@ fn load_config(path: &PathBuf) -> Option<Config> {
             listen_ports.push(ListenPortConfig {
                 key: key.to_string(),
                 port: *port,
-                enabled: false,
+                enabled: true,
                 label: label.to_string(),
                 is_preset: true,
             });
@@ -740,24 +739,6 @@ fn main() {
             .on_switch_tab(move |tab| {
                 let w = w.upgrade().unwrap();
                 w.global::<AppState>().set_active_tab(tab);
-            });
-    }
-
-    // Toggle listen port enabled
-    {
-        let w = main_window.as_weak();
-        let saved = saved_state.clone();
-        main_window
-            .global::<AppState>()
-            .on_toggle_listen_port(move |index, enabled| {
-                let w = w.upgrade().unwrap();
-                let state = w.global::<AppState>();
-                let model = state.get_listen_ports();
-                if let Some(mut lp) = model.row_data(index as usize) {
-                    lp.enabled = enabled;
-                    model.set_row_data(index as usize, lp);
-                }
-                check_pending_changes(&state, &saved.lock().unwrap());
             });
     }
 
