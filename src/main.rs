@@ -372,14 +372,29 @@ fn run_headless(config_path: PathBuf) {
         })
         .collect();
 
-    let bind_addr = format!("0.0.0.0:{}", config.listen_port);
-    let socket = UdpSocket::bind(&bind_addr).unwrap_or_else(|e| {
-        eprintln!("Failed to bind to {}: {}", bind_addr, e);
-        std::process::exit(1);
-    });
-    tune_socket(&socket);
+    let enabled_ports: Vec<&ListenPortConfig> = config
+        .listen_ports
+        .iter()
+        .filter(|lp| lp.enabled && lp.port > 0)
+        .collect();
 
-    println!("Listening on UDP port {}", config.listen_port);
+    if enabled_ports.is_empty() {
+        eprintln!("No enabled listen ports in config");
+        std::process::exit(1);
+    }
+
+    let mut sockets: Vec<UdpSocket> = Vec::new();
+    for lp in &enabled_ports {
+        let bind_addr = format!("0.0.0.0:{}", lp.port);
+        let socket = UdpSocket::bind(&bind_addr).unwrap_or_else(|e| {
+            eprintln!("Failed to bind to {}: {}", bind_addr, e);
+            std::process::exit(1);
+        });
+        tune_socket(&socket);
+        println!("Listening on UDP port {}", lp.port);
+        sockets.push(socket);
+    }
+
     for target in &targets {
         println!("  Forwarding to {}", target);
     }
@@ -390,6 +405,29 @@ fn run_headless(config_path: PathBuf) {
 
     spawn_ring_senders(&targets, &ring, &head, &stop);
 
+    // Spawn receiver threads for all sockets except the last
+    for socket in sockets.drain(..sockets.len().saturating_sub(1)) {
+        let ring = ring.clone();
+        let head = head.clone();
+        let stop = stop.clone();
+        thread::spawn(move || {
+            let mut buf = [0u8; 65535];
+            loop {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let (len, _src) = match socket.recv_from(&mut buf) {
+                    Ok(result) => result,
+                    Err(_) => continue,
+                };
+                ring.publish(&buf[..len]);
+                head.fetch_add(1, Ordering::Release);
+            }
+        });
+    }
+
+    // Use last socket on main thread
+    let socket = sockets.pop().unwrap();
     let mut buf = [0u8; 65535];
     loop {
         let (len, _src) = match socket.recv_from(&mut buf) {
@@ -510,12 +548,13 @@ fn refresh_target_errors(state: &AppState) {
 
 #[derive(Clone)]
 struct SavedState {
-    listen_port: String,
+    listen_ports: Vec<ListenPortConfig>,
     targets: Vec<(String, String)>, // (address, note)
 }
 
 impl SavedState {
     fn from_ui(state: &AppState) -> Self {
+        let listen_ports = extract_listen_ports_from_ui(state);
         let model = state.get_targets();
         let targets = (0..model.row_count())
             .map(|i| {
@@ -524,14 +563,20 @@ impl SavedState {
             })
             .collect();
         Self {
-            listen_port: state.get_listen_port().to_string(),
+            listen_ports,
             targets,
         }
     }
 
     fn matches_ui(&self, state: &AppState) -> bool {
-        if self.listen_port != state.get_listen_port().as_str() {
+        let ui_ports = extract_listen_ports_from_ui(state);
+        if self.listen_ports.len() != ui_ports.len() {
             return false;
+        }
+        for (a, b) in self.listen_ports.iter().zip(ui_ports.iter()) {
+            if a.key != b.key || a.port != b.port || a.enabled != b.enabled || a.label != b.label {
+                return false;
+            }
         }
         let model = state.get_targets();
         if self.targets.len() != model.row_count() {
@@ -545,6 +590,36 @@ impl SavedState {
         }
         true
     }
+}
+
+fn extract_listen_ports_from_ui(state: &AppState) -> Vec<ListenPortConfig> {
+    let model = state.get_listen_ports();
+    (0..model.row_count())
+        .map(|i| {
+            let lp = model.row_data(i).unwrap();
+            ListenPortConfig {
+                key: lp.key.to_string(),
+                port: lp.port.to_string().parse().unwrap_or(0),
+                enabled: lp.enabled,
+                label: lp.label.to_string(),
+                is_preset: lp.is_preset,
+            }
+        })
+        .collect()
+}
+
+fn listen_ports_to_model(ports: &[ListenPortConfig]) -> ModelRc<ListenPort> {
+    let items: Vec<ListenPort> = ports
+        .iter()
+        .map(|lp| ListenPort {
+            key: SharedString::from(lp.key.as_str()),
+            port: SharedString::from(lp.port.to_string()),
+            enabled: lp.enabled,
+            label: SharedString::from(lp.label.as_str()),
+            is_preset: lp.is_preset,
+        })
+        .collect();
+    ModelRc::new(VecModel::from(items))
 }
 
 fn check_pending_changes(state: &AppState, saved: &SavedState) {
@@ -632,7 +707,7 @@ fn main() {
     // Load existing config into UI
     if let Some(config) = load_config(&config_file) {
         let state = main_window.global::<AppState>();
-        state.set_listen_port(SharedString::from(config.listen_port.to_string()));
+        state.set_listen_ports(listen_ports_to_model(&config.listen_ports));
 
         let targets: Vec<ForwardTarget> = config
             .targets
@@ -657,16 +732,113 @@ fn main() {
     let packet_count = Arc::new(AtomicU64::new(0));
     let thread_handle: Arc<Mutex<Option<thread::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
 
-    // Update listen port
+    // Switch tab
+    {
+        let w = main_window.as_weak();
+        main_window
+            .global::<AppState>()
+            .on_switch_tab(move |tab| {
+                let w = w.upgrade().unwrap();
+                w.global::<AppState>().set_active_tab(tab);
+            });
+    }
+
+    // Toggle listen port enabled
     {
         let w = main_window.as_weak();
         let saved = saved_state.clone();
         main_window
             .global::<AppState>()
-            .on_update_listen_port(move |value| {
+            .on_toggle_listen_port(move |index, enabled| {
                 let w = w.upgrade().unwrap();
                 let state = w.global::<AppState>();
-                state.set_listen_port(value);
+                let model = state.get_listen_ports();
+                if let Some(mut lp) = model.row_data(index as usize) {
+                    lp.enabled = enabled;
+                    model.set_row_data(index as usize, lp);
+                }
+                check_pending_changes(&state, &saved.lock().unwrap());
+            });
+    }
+
+    // Update listen port number
+    {
+        let w = main_window.as_weak();
+        let saved = saved_state.clone();
+        main_window
+            .global::<AppState>()
+            .on_update_listen_port_number(move |index, value| {
+                let w = w.upgrade().unwrap();
+                let state = w.global::<AppState>();
+                let model = state.get_listen_ports();
+                if let Some(mut lp) = model.row_data(index as usize) {
+                    lp.port = value;
+                    model.set_row_data(index as usize, lp);
+                }
+                check_pending_changes(&state, &saved.lock().unwrap());
+            });
+    }
+
+    // Add custom listen port
+    {
+        let w = main_window.as_weak();
+        let saved = saved_state.clone();
+        main_window
+            .global::<AppState>()
+            .on_add_custom_listen_port(move || {
+                let w = w.upgrade().unwrap();
+                let state = w.global::<AppState>();
+                let model = state.get_listen_ports();
+                // Find next custom_N key
+                let mut max_n = 0u32;
+                for i in 0..model.row_count() {
+                    if let Some(lp) = model.row_data(i) {
+                        if let Some(n_str) = lp.key.strip_prefix("custom_") {
+                            if let Ok(n) = n_str.parse::<u32>() {
+                                max_n = max_n.max(n);
+                            }
+                        }
+                    }
+                }
+                let new_key = format!("custom_{}", max_n + 1);
+                let mut ports: Vec<ListenPort> = (0..model.row_count())
+                    .map(|i| model.row_data(i).unwrap())
+                    .collect();
+                ports.push(ListenPort {
+                    key: SharedString::from(new_key.as_str()),
+                    port: SharedString::from("0"),
+                    enabled: true,
+                    label: SharedString::from("Custom"),
+                    is_preset: false,
+                });
+                state.set_listen_ports(ModelRc::new(VecModel::from(ports)));
+                check_pending_changes(&state, &saved.lock().unwrap());
+            });
+    }
+
+    // Remove listen port
+    {
+        let w = main_window.as_weak();
+        let saved = saved_state.clone();
+        main_window
+            .global::<AppState>()
+            .on_remove_listen_port(move |index| {
+                let w = w.upgrade().unwrap();
+                let state = w.global::<AppState>();
+                let model = state.get_listen_ports();
+                let idx = index as usize;
+                if idx < model.row_count() {
+                    if let Some(lp) = model.row_data(idx) {
+                        if lp.is_preset {
+                            return; // Can't remove presets
+                        }
+                    }
+                    let mut ports: Vec<ListenPort> = (0..model.row_count())
+                        .map(|i| model.row_data(i).unwrap())
+                        .collect();
+                    ports.remove(idx);
+                    state.set_listen_ports(ModelRc::new(VecModel::from(ports)));
+                }
                 check_pending_changes(&state, &saved.lock().unwrap());
             });
     }
@@ -757,11 +929,12 @@ fn main() {
     {
         let w = main_window.as_weak();
         let path = config_file.clone();
+        let saved = saved_state.clone();
         main_window.global::<AppState>().on_cancel_changes(move || {
             let w = w.upgrade().unwrap();
             let state = w.global::<AppState>();
             if let Some(config) = load_config(&path) {
-                state.set_listen_port(SharedString::from(config.listen_port.to_string()));
+                state.set_listen_ports(listen_ports_to_model(&config.listen_ports));
                 let targets: Vec<ForwardTarget> = config
                     .targets
                     .iter()
@@ -773,6 +946,7 @@ fn main() {
                     })
                     .collect();
                 state.set_targets(ModelRc::new(VecModel::from(targets)));
+                *saved.lock().unwrap() = SavedState::from_ui(&state);
             }
             state.set_has_pending_changes(false);
             state.set_has_errors(false);
@@ -788,10 +962,9 @@ fn main() {
             .global::<AppState>()
             .on_toggle_launch_on_startup(move |enabled| {
                 set_launch_on_startup(enabled);
-                // Persist to config
                 let w = w.upgrade().unwrap();
                 let state = w.global::<AppState>();
-                let listen_port = state.get_listen_port().to_string();
+                let listen_ports = extract_listen_ports_from_ui(&state);
                 let model = state.get_targets();
                 let targets: Vec<(String, String)> = (0..model.row_count())
                     .map(|i| {
@@ -801,7 +974,7 @@ fn main() {
                     .collect();
                 save_config(
                     &path,
-                    &listen_port,
+                    &listen_ports,
                     &targets,
                     enabled,
                     state.get_minimize_to_tray(),
@@ -818,7 +991,7 @@ fn main() {
             .on_toggle_minimize_to_tray(move |enabled| {
                 let w = w.upgrade().unwrap();
                 let state = w.global::<AppState>();
-                let listen_port = state.get_listen_port().to_string();
+                let listen_ports = extract_listen_ports_from_ui(&state);
                 let model = state.get_targets();
                 let targets: Vec<(String, String)> = (0..model.row_count())
                     .map(|i| {
@@ -828,7 +1001,7 @@ fn main() {
                     .collect();
                 save_config(
                     &path,
-                    &listen_port,
+                    &listen_ports,
                     &targets,
                     state.get_launch_on_startup(),
                     enabled,
@@ -846,7 +1019,7 @@ fn main() {
         main_window.global::<AppState>().on_save_config(move || {
             let w = w.upgrade().unwrap();
             let state = w.global::<AppState>();
-            let listen_port = state.get_listen_port().to_string();
+            let listen_ports = extract_listen_ports_from_ui(&state);
             let model = state.get_targets();
             let targets: Vec<(String, String)> = (0..model.row_count())
                 .map(|i| {
@@ -857,7 +1030,7 @@ fn main() {
             let launch_on_startup = state.get_launch_on_startup();
             save_config(
                 &path,
-                &listen_port,
+                &listen_ports,
                 &targets,
                 launch_on_startup,
                 state.get_minimize_to_tray(),
@@ -892,20 +1065,21 @@ fn main() {
             let w_inner = w.upgrade().unwrap();
             let state = w_inner.global::<AppState>();
 
-            let listen_port: u16 = match state.get_listen_port().to_string().parse() {
-                Ok(p) => p,
-                Err(_) => {
-                    state.set_status_text(SharedString::from("Invalid listen port"));
-                    return;
-                }
-            };
+            // Collect enabled listen ports
+            let listen_ports = extract_listen_ports_from_ui(&state);
+            let enabled_ports: Vec<&ListenPortConfig> =
+                listen_ports.iter().filter(|lp| lp.enabled && lp.port > 0).collect();
+
+            if enabled_ports.is_empty() {
+                state.set_status_text(SharedString::from("Enable at least one listen port"));
+                return;
+            }
 
             let model = state.get_targets();
             let mut targets: Vec<SocketAddr> = Vec::new();
             for i in 0..model.row_count() {
                 let t = model.row_data(i).unwrap();
                 let addr_str = t.address.to_string();
-                // Try direct parse first (works for IP:port), then DNS resolve for hostnames
                 match addr_str.parse() {
                     Ok(addr) => targets.push(addr),
                     Err(_) => {
@@ -939,21 +1113,29 @@ fn main() {
                 return;
             }
 
-            let bind_addr = format!("0.0.0.0:{}", listen_port);
-            let socket = match UdpSocket::bind(&bind_addr) {
-                Ok(s) => s,
-                Err(e) => {
-                    state.set_status_text(SharedString::from(format!("Bind failed: {}", e)));
-                    return;
+            // Bind a UDP socket per enabled listen port
+            let mut sockets: Vec<UdpSocket> = Vec::new();
+            let mut bound_ports: Vec<u16> = Vec::new();
+            for lp in &enabled_ports {
+                let bind_addr = format!("0.0.0.0:{}", lp.port);
+                match UdpSocket::bind(&bind_addr) {
+                    Ok(s) => {
+                        s.set_read_timeout(Some(std::time::Duration::from_millis(500))).ok();
+                        tune_socket(&s);
+                        sockets.push(s);
+                        bound_ports.push(lp.port);
+                    }
+                    Err(e) => {
+                        state.set_status_text(SharedString::from(format!(
+                            "Bind failed on port {}: {}",
+                            lp.port, e
+                        )));
+                        return;
+                    }
                 }
-            };
+            }
 
-            socket
-                .set_read_timeout(Some(std::time::Duration::from_millis(500)))
-                .ok();
-            tune_socket(&socket);
-
-            // Broadcast ring — zero allocation on hot path, same as headless
+            // Shared broadcast ring for all listen sockets
             let ring = Arc::new(BroadcastRing::new(RING_CAPACITY));
             let ring_head = Arc::new(AtomicU64::new(0));
             let sender_stop = Arc::new(AtomicBool::new(false));
@@ -964,9 +1146,16 @@ fn main() {
             packet_count.store(0, Ordering::Relaxed);
             state.set_running(true);
             state.set_packets_forwarded(0);
+
+            let port_list = bound_ports
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
             state.set_status_text(SharedString::from(format!(
-                "Listening on port {}",
-                listen_port
+                "Listening on port{}{}",
+                if bound_ports.len() > 1 { "s " } else { " " },
+                port_list
             )));
 
             let stop = stop_flag.clone();
@@ -974,46 +1163,73 @@ fn main() {
             let w2 = w.clone();
             let handle = handle.clone();
 
+            // Coordinator thread: spawns one receiver per socket, monitors stop flag
             let h = thread::spawn(move || {
-                let mut buf = [0u8; 65535];
-                let mut last_ui_update = Instant::now();
-                let mut last_pps_count: u64 = 0;
+                let receiver_handles: Vec<thread::JoinHandle<()>> = sockets
+                    .into_iter()
+                    .map(|socket| {
+                        let ring = ring.clone();
+                        let ring_head = ring_head.clone();
+                        let stop = stop.clone();
+                        let count = count.clone();
+                        let w2 = w2.clone();
+                        thread::spawn(move || {
+                            let mut buf = [0u8; 65535];
+                            let mut last_ui_update = Instant::now();
+                            let mut last_pps_count: u64 = 0;
+                            loop {
+                                if stop.load(Ordering::Relaxed) {
+                                    break;
+                                }
+
+                                let (len, _src) = match socket.recv_from(&mut buf) {
+                                    Ok(result) => result,
+                                    Err(ref e)
+                                        if e.kind() == std::io::ErrorKind::WouldBlock
+                                            || e.kind() == std::io::ErrorKind::TimedOut =>
+                                    {
+                                        continue
+                                    }
+                                    Err(_) => continue,
+                                };
+
+                                ring.publish(&buf[..len]);
+                                ring_head.fetch_add(1, Ordering::Release);
+
+                                let n = count.fetch_add(1, Ordering::Relaxed) + 1;
+                                let elapsed = last_ui_update.elapsed();
+                                if elapsed.as_millis() >= 1000 {
+                                    let pps = ((n - last_pps_count) as f64
+                                        / elapsed.as_secs_f64())
+                                        as i32;
+                                    last_pps_count = n;
+                                    last_ui_update = Instant::now();
+                                    let _ = w2.upgrade_in_event_loop(move |main_window| {
+                                        let state = main_window.global::<AppState>();
+                                        state.set_packets_forwarded(n as i32);
+                                        state.set_packets_per_second(pps);
+                                        state.set_status_text(SharedString::from(format!(
+                                            "Running — {} packets forwarded",
+                                            n
+                                        )));
+                                    });
+                                }
+                            }
+                        })
+                    })
+                    .collect();
+
+                // Wait for stop, then join all receivers
                 loop {
                     if stop.load(Ordering::Relaxed) {
                         sender_stop.store(true, Ordering::Relaxed);
                         break;
                     }
+                    thread::sleep(std::time::Duration::from_millis(100));
+                }
 
-                    let (len, _src) = match socket.recv_from(&mut buf) {
-                        Ok(result) => result,
-                        Err(ref e)
-                            if e.kind() == std::io::ErrorKind::WouldBlock
-                                || e.kind() == std::io::ErrorKind::TimedOut =>
-                        {
-                            continue
-                        }
-                        Err(_) => continue,
-                    };
-
-                    ring.publish(&buf[..len]);
-                    ring_head.fetch_add(1, Ordering::Release);
-
-                    let n = count.fetch_add(1, Ordering::Relaxed) + 1;
-                    let elapsed = last_ui_update.elapsed();
-                    if elapsed.as_millis() >= 1000 {
-                        let pps = ((n - last_pps_count) as f64 / elapsed.as_secs_f64()) as i32;
-                        last_pps_count = n;
-                        last_ui_update = Instant::now();
-                        let _ = w2.upgrade_in_event_loop(move |main_window| {
-                            let state = main_window.global::<AppState>();
-                            state.set_packets_forwarded(n as i32);
-                            state.set_packets_per_second(pps);
-                            state.set_status_text(SharedString::from(format!(
-                                "Running — {} packets forwarded",
-                                n
-                            )));
-                        });
-                    }
+                for h in receiver_handles {
+                    let _ = h.join();
                 }
 
                 let _ = w2.upgrade_in_event_loop(move |main_window| {
@@ -1034,10 +1250,16 @@ fn main() {
         });
     }
 
-    // Auto-start forwarding if config has targets
+    // Auto-start forwarding if config has enabled listen ports and targets
     {
         let state = main_window.global::<AppState>();
-        if state.get_targets().row_count() > 0 {
+        let has_enabled_ports = {
+            let model = state.get_listen_ports();
+            (0..model.row_count()).any(|i| {
+                model.row_data(i).is_some_and(|lp| lp.enabled)
+            })
+        };
+        if has_enabled_ports && state.get_targets().row_count() > 0 {
             state.invoke_start();
         }
     }
