@@ -16,3 +16,8 @@ label = Forza Motorsport
 ip = 127.0.0.1
 port = 5301
 note = RaceIQ
+
+[forward.2]
+ip = 127.0.0.1
+port = 20888
+note = Fanatec (F1 25)
