@@ -128,8 +128,23 @@ fn config_path() -> PathBuf {
     exe_dir.join("config.ini")
 }
 
+#[derive(Clone)]
+struct ListenPortConfig {
+    key: String,        // e.g. "raceiq", "f1", "forza", "custom_1"
+    port: u16,
+    enabled: bool,
+    label: String,      // e.g. "RaceIQ", "F1 24", "Forza Motorsport"
+    is_preset: bool,    // presets can't be removed, only toggled
+}
+
+const PRESET_LISTEN_PORTS: &[(&str, u16, &str)] = &[
+    ("raceiq", 9301, "RaceIQ"),
+    ("f1", 20888, "F1 24"),
+    ("forza", 4843, "Forza Motorsport"),
+];
+
 struct Config {
-    listen_port: u16,
+    listen_ports: Vec<ListenPortConfig>,
     targets: Vec<(String, String)>, // (address as "ip:port", note)
     launch_on_startup: bool,
     minimize_to_tray: bool,
@@ -138,10 +153,81 @@ struct Config {
 fn load_config(path: &PathBuf) -> Option<Config> {
     let conf = Ini::load_from_file(path).ok()?;
     let general = conf.section(Some("general"))?;
-    let listen_port: u16 = general.get("listen_port")?.parse().ok()?;
     let launch_on_startup = general.get("launch_on_startup") == Some("true");
     let minimize_to_tray = general.get("minimize_to_tray") == Some("true");
 
+    // Parse [listen.*] sections
+    let mut listen_ports: Vec<ListenPortConfig> = Vec::new();
+    let mut found_listen_sections = false;
+    for (key, _) in conf.iter() {
+        let section_name = match key {
+            Some(name) if name.starts_with("listen.") => name,
+            _ => continue,
+        };
+        found_listen_sections = true;
+        let section = conf.section(Some(section_name))?;
+        let listen_key = section_name.strip_prefix("listen.").unwrap().to_string();
+        let port: u16 = section.get("port")?.parse().ok()?;
+        let enabled = section.get("enabled").map(|v| v == "true").unwrap_or(true);
+        let is_preset = PRESET_LISTEN_PORTS.iter().any(|(k, _, _)| *k == listen_key);
+        let label = section
+            .get("label")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                PRESET_LISTEN_PORTS
+                    .iter()
+                    .find(|(k, _, _)| *k == listen_key)
+                    .map(|(_, _, l)| l.to_string())
+                    .unwrap_or_else(|| listen_key.clone())
+            });
+        listen_ports.push(ListenPortConfig {
+            key: listen_key,
+            port,
+            enabled,
+            label,
+            is_preset,
+        });
+    }
+
+    // Legacy fallback: single listen_port in [general]
+    if !found_listen_sections {
+        if let Some(port) = general.get("listen_port").and_then(|p| p.parse::<u16>().ok()) {
+            // Map legacy port to a preset if possible, otherwise treat as custom
+            let matching_preset = PRESET_LISTEN_PORTS.iter().find(|(_, p, _)| *p == port);
+            if let Some((key, _, label)) = matching_preset {
+                listen_ports.push(ListenPortConfig {
+                    key: key.to_string(),
+                    port,
+                    enabled: true,
+                    label: label.to_string(),
+                    is_preset: true,
+                });
+            } else {
+                listen_ports.push(ListenPortConfig {
+                    key: "custom_1".to_string(),
+                    port,
+                    enabled: true,
+                    label: format!("Port {}", port),
+                    is_preset: false,
+                });
+            }
+        }
+    }
+
+    // Ensure all presets exist (add disabled ones if missing)
+    for (key, port, label) in PRESET_LISTEN_PORTS {
+        if !listen_ports.iter().any(|lp| lp.key == *key) {
+            listen_ports.push(ListenPortConfig {
+                key: key.to_string(),
+                port: *port,
+                enabled: false,
+                label: label.to_string(),
+                is_preset: true,
+            });
+        }
+    }
+
+    // Parse forward targets
     let mut targets = Vec::new();
     for (key, _) in conf.iter() {
         let section_name = match key {
@@ -156,7 +242,7 @@ fn load_config(path: &PathBuf) -> Option<Config> {
     }
 
     Some(Config {
-        listen_port,
+        listen_ports,
         targets,
         launch_on_startup,
         minimize_to_tray,
@@ -165,16 +251,22 @@ fn load_config(path: &PathBuf) -> Option<Config> {
 
 fn save_config(
     path: &PathBuf,
-    listen_port: &str,
+    listen_ports: &[ListenPortConfig],
     targets: &[(String, String)],
     launch_on_startup: bool,
     minimize_to_tray: bool,
 ) {
     let mut conf = Ini::new();
     conf.with_section(Some("general"))
-        .set("listen_port", listen_port)
         .set("launch_on_startup", launch_on_startup.to_string())
         .set("minimize_to_tray", minimize_to_tray.to_string());
+
+    for lp in listen_ports {
+        conf.with_section(Some(format!("listen.{}", lp.key)))
+            .set("port", lp.port.to_string())
+            .set("enabled", lp.enabled.to_string())
+            .set("label", &lp.label);
+    }
 
     for (i, (address, note)) in targets.iter().enumerate() {
         // Split address back into ip and port for INI compatibility
