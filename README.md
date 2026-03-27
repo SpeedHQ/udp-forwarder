@@ -1,5 +1,7 @@
 <p align="center">
   <img src="assets/screenshot.png" alt="UDP Forwarder Screenshot" width="600">
+  <br><br>
+  <img src="assets/icon.png" alt="UDP Forwarder Icon" width="64">
   <br>
   <h1 align="center">UDP Forwarder</h1>
 </p>

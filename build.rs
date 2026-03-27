@@ -148,7 +148,7 @@ fn generate_app_icon() {
     draw_arrow_sdf(&mut img, size, 52.0, 22.0, [255, 255, 255]);
 
     // Save as app icon for Slint window
-    let ui_icon_path = Path::new("ui/icon.png");
+    let ui_icon_path = Path::new("assets/icon.png");
     img.save(ui_icon_path).expect("Failed to save app icon");
 
     // Also save to OUT_DIR for macOS dock icon
