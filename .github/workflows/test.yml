@@ -3,7 +3,19 @@ name: Test
 on:
   push:
     branches: [main]
+    paths:
+      - '**.rs'
+      - '**.slint'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/test.yml'
   pull_request:
+    paths:
+      - '**.rs'
+      - '**.slint'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/test.yml'
   workflow_dispatch:
 
 jobs:
