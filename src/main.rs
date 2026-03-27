@@ -130,17 +130,15 @@ fn config_path() -> PathBuf {
 
 #[derive(Clone)]
 struct ListenPortConfig {
-    key: String,        // e.g. "f1", "forza", "custom_1"
+    key: String, // e.g. "f1", "forza", "custom_1"
     port: u16,
     enabled: bool,
-    label: String,      // e.g. "F1 24", "Forza Motorsport"
-    is_preset: bool,    // presets can't be removed, only toggled
+    label: String,   // e.g. "F1 24", "Forza Motorsport"
+    is_preset: bool, // presets can't be removed, only toggled
 }
 
-const PRESET_LISTEN_PORTS: &[(&str, u16, &str)] = &[
-    ("f1", 20777, "F1 24"),
-    ("forza", 4843, "Forza Motorsport"),
-];
+const PRESET_LISTEN_PORTS: &[(&str, u16, &str)] =
+    &[("f1", 20777, "F1 24"), ("forza", 4843, "Forza Motorsport")];
 
 struct Config {
     listen_ports: Vec<ListenPortConfig>,
@@ -190,7 +188,10 @@ fn load_config(path: &PathBuf) -> Option<Config> {
 
     // Legacy fallback: single listen_port in [general]
     if !found_listen_sections {
-        if let Some(port) = general.get("listen_port").and_then(|p| p.parse::<u16>().ok()) {
+        if let Some(port) = general
+            .get("listen_port")
+            .and_then(|p| p.parse::<u16>().ok())
+        {
             // Map legacy port to a preset if possible, otherwise treat as custom
             let matching_preset = PRESET_LISTEN_PORTS.iter().find(|(_, p, _)| *p == port);
             if let Some((key, _, label)) = matching_preset {
@@ -734,12 +735,10 @@ fn main() {
     // Switch tab
     {
         let w = main_window.as_weak();
-        main_window
-            .global::<AppState>()
-            .on_switch_tab(move |tab| {
-                let w = w.upgrade().unwrap();
-                w.global::<AppState>().set_active_tab(tab);
-            });
+        main_window.global::<AppState>().on_switch_tab(move |tab| {
+            let w = w.upgrade().unwrap();
+            w.global::<AppState>().set_active_tab(tab);
+        });
     }
 
     // Update listen port number
@@ -1048,8 +1047,10 @@ fn main() {
 
             // Collect enabled listen ports
             let listen_ports = extract_listen_ports_from_ui(&state);
-            let enabled_ports: Vec<&ListenPortConfig> =
-                listen_ports.iter().filter(|lp| lp.enabled && lp.port > 0).collect();
+            let enabled_ports: Vec<&ListenPortConfig> = listen_ports
+                .iter()
+                .filter(|lp| lp.enabled && lp.port > 0)
+                .collect();
 
             if enabled_ports.is_empty() {
                 state.set_status_text(SharedString::from("Enable at least one listen port"));
@@ -1101,7 +1102,8 @@ fn main() {
                 let bind_addr = format!("0.0.0.0:{}", lp.port);
                 match UdpSocket::bind(&bind_addr) {
                     Ok(s) => {
-                        s.set_read_timeout(Some(std::time::Duration::from_millis(500))).ok();
+                        s.set_read_timeout(Some(std::time::Duration::from_millis(500)))
+                            .ok();
                         tune_socket(&s);
                         sockets.push(s);
                         bound_ports.push(lp.port);
@@ -1180,8 +1182,7 @@ fn main() {
                                 let n = count.fetch_add(1, Ordering::Relaxed) + 1;
                                 let elapsed = last_ui_update.elapsed();
                                 if elapsed.as_millis() >= 1000 {
-                                    let pps = ((n - last_pps_count) as f64
-                                        / elapsed.as_secs_f64())
+                                    let pps = ((n - last_pps_count) as f64 / elapsed.as_secs_f64())
                                         as i32;
                                     last_pps_count = n;
                                     last_ui_update = Instant::now();
@@ -1236,9 +1237,7 @@ fn main() {
         let state = main_window.global::<AppState>();
         let has_enabled_ports = {
             let model = state.get_listen_ports();
-            (0..model.row_count()).any(|i| {
-                model.row_data(i).is_some_and(|lp| lp.enabled)
-            })
+            (0..model.row_count()).any(|i| model.row_data(i).is_some_and(|lp| lp.enabled))
         };
         if has_enabled_ports && state.get_targets().row_count() > 0 {
             state.invoke_start();
