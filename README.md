@@ -6,22 +6,6 @@
 
 A lightweight UDP packet forwarder written in Rust. Listens on a single port and forwards all received packets to multiple destinations — useful for splitting game telemetry or any UDP stream to multiple consumers. Built as an optional companion to [RaceIQ](https://github.com/SpeedHQ/RaceIQ) so sim racers can receive telemetry on all their gear and software simultaneously with minimum latency.
 
-## Quick Start
-
-### macOS / Linux
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/SpeedHQ/udp-forwarder/main/install.sh | bash
-```
-
-### Windows (PowerShell)
-
-```powershell
-irm https://raw.githubusercontent.com/SpeedHQ/udp-forwarder/main/install.ps1 | iex
-```
-
-Both installers download the latest release and install the binary.
-
 ## GUI Mode
 
 Launch the app to configure everything visually — set the listen port, add or remove forwarding targets, and start/stop forwarding. Settings are saved automatically to `config.ini`.
