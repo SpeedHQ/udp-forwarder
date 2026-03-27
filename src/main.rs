@@ -138,7 +138,7 @@ struct ListenPortConfig {
 }
 
 const PRESET_LISTEN_PORTS: &[(&str, u16, &str)] = &[
-    ("f1", 20888, "F1 24"),
+    ("f1", 20777, "F1 24"),
     ("forza", 4843, "Forza Motorsport"),
 ];
 

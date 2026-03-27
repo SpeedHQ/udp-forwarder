@@ -3,7 +3,7 @@ launch_on_startup = false
 minimize_to_tray = false
 
 [listen.f1]
-port = 20888
+port = 20777
 enabled = true
 label = F1 24
 
