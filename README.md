@@ -63,8 +63,6 @@ If you prefer not to use the install script, grab a zip from [Releases](https://
 
 Each zip contains the binary and an example `config.ini` for headless mode.
 
-**macOS note:** Remove the quarantine attribute after extracting: `xattr -d com.apple.quarantine udp-forwarder`
-
 ## Performance
 
 Architecture uses parallel fan-out with one dedicated sender thread per target, pre-allocated broadcast ring buffer, connected UDP sockets, and 4MB socket buffers. Zero heap allocations on the hot path.
